@@ -1,0 +1,18 @@
+cache:
+  manager:
+    fallbackToNoOpCache: true
+    caffeineCaches:
+      - names: [ "logoByRepository" ]
+        allowNullValues: true
+        initialCapacity: 100
+        maximumSize: 500
+        enableRecordStats: false
+        expireAfterWriteMinutes: 10
+        expireAfterAccessMinutes: 10
+        refreshAfterWriteMinutes: 10
+    mapCaches:
+  logoByRepository:
+    name: logoByRepository
+    keyPattern: dpsaceplugin_$repo$:v0
+    
+    

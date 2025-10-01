@@ -1,0 +1,16 @@
+web:
+  security:
+    enabled: true
+    authorized-endpoints: [ api ]
+    allowed-endpoints: [ health ]
+    idp:
+      api-key:
+        enabled: false
+      resource:
+        token-type: JWT #| opaque
+        jwt:
+          claims: [ role, x-role ]
+          issuer-uri: ${IDP_ISSUER_URI}
+          audiences:
+            - ${SECURITY_AUDIENCE}
+          validIssuer: ${IDP_ISSUER_URI}

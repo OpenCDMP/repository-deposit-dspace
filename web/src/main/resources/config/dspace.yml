@@ -1,0 +1,57 @@
+dspace:
+  collection: ${DEPOSIT_DSPACE_COLLECTION_ID}
+  username: ${DEPOSIT_DSPACE_USERNAME}
+  password: ${DEPOSIT_DSPACE_PASSWORD}
+  maxInMemorySizeInBytes: 6554000
+  depositConfiguration:
+    deposit-type: 2
+    repository-id: dspace
+    access-token:
+    repository-url: ${DEPOSIT_DSPACE_URL:https://dspace.org/server/api/}
+    repository-authorization-url:
+    repository-record-url: ${DEPOSIT_DSPACE_RECORD_URL:https://dspace.org/handle/{doi_id}}
+    repository-access-token-url:
+    repository-client-id:
+    repository-client-secret:
+    redirect-uri:
+    has-logo: ${DEPOSIT_DSPACE_HAS_LOGO:true}
+    useSharedStorage: ${DEPOSIT_DSPACE_USE_SHARED_STORAGE:false}
+    configuration-fields:
+    user-configuration-fields:
+      - code: dspace-email
+        type: 0
+        label: Email
+        authInfo: true
+      - code: dspace-password
+        type: 0
+        label: Password
+        authInfo: true
+    auth-methods:
+      - PluginDefault
+      - AuthInfoFromUserProfile
+  domain: ${OPENCDMP_DOMAIN}
+  default-type: ${DEPOSIT_DSPACE_TYPE:Dataset}
+  logo: ${DEPOSIT_DSPACE_LOGO_PATH:classpath:dspace.png}
+  accepted-type-codes:
+      - Animation
+      - Article
+      - Book
+      - Book chapter
+      - Dataset
+      - Learning Object
+      - Image
+      - Image, 3-D
+      - Map
+      - Musical Score
+      - Plan or blueprint
+      - Preprint
+      - Presentation
+      - Recording, acoustical
+      - Recording, musical
+      - Recording, oral
+      - Software
+      - Technical Report
+      - Thesis
+      - Video
+      - Working Paper
+      - Other

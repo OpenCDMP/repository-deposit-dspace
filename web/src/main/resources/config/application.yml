@@ -1,0 +1,12 @@
+spring:
+  jackson:
+    default-property-inclusion: non_null
+  config:
+    import: optional:classpath:config/app.env[.properties], optional:classpath:config/app-${spring.profiles.active}.env[.properties], optional:file:../config/app.env[.properties], optional:file:../config/app-${spring.profiles.active}.env[.properties],
+      optional:classpath:config/server.yml[.yml], optional:classpath:config/server-${spring.profiles.active}.yml[.yml], optional:file:../config/server-${spring.profiles.active}.yml[.yml],
+      optional:classpath:config/logging.yml[.yml], optional:classpath:config/logging-${spring.profiles.active}.yml[.yml], optional:file:../config/logging-${spring.profiles.active}.yml[.yml],
+      optional:classpath:config/dspace.yml[.yml], optional:classpath:config/dspace-${spring.profiles.active}.yml[.yml], optional:file:../config/dspace-${spring.profiles.active}.yml[.yml],
+      optional:classpath:config/security.yml[.yml], optional:classpath:config/security-${spring.profiles.active}.yml[.yml], optional:file:../config/security-${spring.profiles.active}.yml[.yml],
+      optional:classpath:config/cache.yml[.yml], optional:classpath:config/cache-${spring.profiles.active}.yml[.yml], optional:file:../config/cache-${spring.profiles.active}.yml[.yml],
+      optional:classpath:config/idpclaims.yml[.yml], optional:classpath:config/idpclaims-${spring.profiles.active}.yml[.yml], optional:file:../config/idpclaims-${spring.profiles.active}.yml[.yml],
+      optional:classpath:config/semantics.yml[.yml], optional:classpath:config/semantics-${spring.profiles.active}.yml[.yml], optional:file:../config/semantics-${spring.profiles.active}.yml[.yml]
