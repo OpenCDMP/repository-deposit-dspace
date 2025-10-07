@@ -1,72 +1,113 @@
 # Repository Deposit DSpace for OpenCDMP
 
-**repository-deposit-dspace** is an implementation of the `repository-deposit-base` package that enables the deposition of **OpenCDMP Plans** into the **Dspace** repository. This service allows users of the **OpenCDMP** platform to submit their DMPs to Dspace, minting a **Digital Object Identifier (DOI)** for each plan. The service is built using **Spring Boot** and can be easily integrated with OpenCDMP as a repository deposit option.
+**repository-deposit-dspace** is an implementation of the [repository-deposit-base](https://github.com/OpenCDMP/repository-deposit-base) package that enables the deposition of **OpenCDMP Plans** into the [DSpace](https://dspace.org/) repository, automatically minting a **Digital Object Identifier (DOI)** for each deposited plan.
 
 ## Overview
 
-The **Dspace** repository is a widely-used open-access research repository that offers DOI assignment for uploaded content. By using the **repository-deposit-dspace** service, OpenCDMP users can directly deposit their DMPs into Dspace, making the plans citeable and publicly available. The service supports both **system-based** and **user-based** depositions depending on the configuration.
+This service integrates with the OpenCDMP platform to provide deposit functionality for DSpace, a widely-used open-access research repository. Users can deposit their plans to DSpace, making them citeable, publicly available, and preservable with a permanent DOI.
 
-- **Deposits**: Supported for DMPs into the Dspace repository.
-- **DOI Minting**: Each successful deposition will mint a DOI through Dspace.
-- **OAuth2 Authentication**: Supports OAuth2-based authentication for user deposits.
+**Supported operations:**
+- ✅ Deposit plans to DSpace
+- ✅ Automatic DOI minting
+- ✅ System-based and user-based depositions
 
-## Features
+---
 
-- **Plan Deposits**: Deposit OpenCDMP plans into Dspace.
-- **DOI Minting**: Automatically mint DOIs for each submitted plan.
-- **OAuth2 Support**: Authenticate with Dspace using OAuth2 for user deposits.
-- **Spring Boot Microservice**: Built as a Spring Boot microservice for seamless integration with OpenCDMP.
+## Quick start
 
-## Key Endpoints
+This service implements the following endpoints as per `DepositController`
 
-This service implements the following endpoints as per `DepositController`:
+### API endpoints
 
-### Deposit Endpoint
+- `POST /deposit` - Deposit a plan to DSpace
+- `GET /configuration` - Get repository configuration
+- `GET /logo` - Get DSpace logo (base64)
 
-- **POST `/deposit`**: Deposits a plan into Dspace and returns the DOI.
+### Example
 
+- **Deposit with System Credentials (Email, Password)**
 ```bash
-POST /deposit
-{
-    "planDepositModel": { ... },
-    "authToken": "user_oauth2_access_token"
-}
+ # Uses a system-wide credenitals configured by the service when authInfo is null.
+ # No user action is required.
+
+ POST /deposit
+  {
+    "planModel": {...},
+    "authInfo": null
+  }
 ```
 
-### Configuration Endpoint
-
-- **GET `/configuration`**: Returns the repository's configuration for Dspace.
-
+- **Deposit with User Credentials (from OpenCDMP profile settings)**
 ```bash
-GET /configuration
+ # The user has stored their credentials in their OpenCDMP profile settings (see https://opencdmp.github.io/user-guide/profile-settings/#external-plugin-settings).
+ # Email, Password credentials are persistent and remains valid until the user updates it in their profile.
+
+ POST /deposit
+  {
+    "planModel": {...},
+    "authInfo": {
+        "authFields": [
+            {
+                "code": "dspace-email"
+                "textValue": "email"
+            },
+            {
+                "code": "dspace-password"
+                "textValue": "password"
+            }
+        ]
+    } 
+  }
 ```
 
-### Logo Endpoint
 
-- **GET `/logo`**: Returns the Dspace logo in base64 format if available.
-
+- **Deposit a new version of an existing plan**
 ```bash
-GET /logo
+ # Same as case 1 (system credentials).
+ # previousDOI is mandatory to indicate that this is a new version of an existing deposit in this repository.
+
+ POST /deposit
+  {
+    "planModel": {
+        "id": "plan-uuid",
+        "title": "My Research Plan",
+        "description": "Plan content",
+        "previousDOI": "doi"
+        // more
+    },
+    "authInfo": null
+  }
 ```
+---
 
-## Example
+## Integration with OpenCDMP
 
-To deposit a plan into Dspace and mint a DOI:
+To integrate this service with your OpenCDMP deployment, configure the deposit plugin in the OpenCDMP admin interface.
 
-```bash
-POST /deposit
-{
-    "planDepositModel": { ... },
-    "authToken": "user_oauth2_access_token"
-}
-```
+For detailed integration instructions, see see the [DSpace Configuration](https://opencdmp.github.io/getting-started/configuration/backend/deposit/#dspace) and the [OpenCDMP Deposit Service Authentication](https://opencdmp.github.io/getting-started/configuration/backend/#deposit-service-authentication).
+
+---
+
+## See Also
+
+For complete documentation on configuration, integration, and usage:
+
+- **Deposit Service Overview**: https://opencdmp.github.io/optional-services/deposit-services/
+- **User Guide**: [Depositing Plans](https://opencdmp.github.io/user-guide/plans/deposit-a-plan/)
+- **Developer Guide**: [Building Custom Deposit Services](https://opencdmp.github.io/developers/plugins/deposit/)
+
+---
 
 ## License
 
 This repository is licensed under the [EUPL 1.2 License](LICENSE).
 
-## Contact
+### Contact
 
-For questions or support regarding this implementation, please contact:
+For questions, support, or feedback:
 
 - **Email**: opencdmp at cite.gr
+- **GitHub Issues**: https://github.com/OpenCDMP/repository-deposit-dspace/issues
+---
+
+*This service is part of the OpenCDMP ecosystem. For general OpenCDMP documentation, visit [opencdmp.github.io](https://opencdmp.github.io).*
