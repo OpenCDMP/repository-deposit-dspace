@@ -1,7 +1,6 @@
 package org.opencdmp.deposit.controller.controllerhandler;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+
 import gr.cite.tools.exception.*;
 import gr.cite.tools.logging.LoggerService;
 import org.slf4j.LoggerFactory;
@@ -11,6 +10,7 @@ import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import tools.jackson.databind.ObjectMapper;
 
 import java.text.MessageFormat;
 import java.util.HashMap;
@@ -26,7 +26,6 @@ public class GlobalExceptionHandler {
 
 	public GlobalExceptionHandler() {
 		this.objectMapper = new ObjectMapper();
-		this.objectMapper.registerModule(new JavaTimeModule());
 	}
 
 

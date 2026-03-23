@@ -11,6 +11,8 @@ This service integrates with the OpenCDMP platform to provide deposit functional
 - ✅ Automatic DOI minting
 - ✅ System-based and user-based depositions
 
+**Supported DSpace version:** 8.x
+
 ---
 
 ## Quick start

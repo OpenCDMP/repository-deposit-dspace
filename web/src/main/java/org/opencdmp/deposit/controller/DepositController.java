@@ -30,7 +30,7 @@ public class DepositController implements org.opencdmp.depositbase.repository.De
 	    this.auditService = auditService;
     }
 
-    public String deposit(@RequestBody PlanDepositModel planDepositModel) throws Exception {
+    public String deposit(@RequestBody PlanDepositModel planDepositModel) {
         logger.debug(new MapLogEntry("deposit " + PlanModel.class.getSimpleName()).And("planDepositModel", planDepositModel));
 
         String doiId = depositClient.deposit(planDepositModel);

@@ -13,6 +13,6 @@ cache:
     mapCaches:
   logoByRepository:
     name: logoByRepository
-    keyPattern: dpsaceplugin_$repo$:v0
+    keyPattern: dspaceplugin_$repo$:v0
     
     

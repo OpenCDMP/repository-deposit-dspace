@@ -1,7 +1,5 @@
 package org.opencdmp.deposit.dspacerepository.service.dspace;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import gr.cite.tools.logging.LoggerService;
 import gr.cite.tools.logging.MapLogEntry;
 import org.json.JSONObject;
@@ -36,6 +34,8 @@ import java.util.*;
 
 
 import reactor.netty.http.client.HttpClient;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @Component
 public class DspaceDepositServiceImpl implements DspaceDepositService {
@@ -66,7 +66,7 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
     }
 
     @Override
-    public String deposit(PlanDepositModel planDepositModel) throws Exception {
+    public String deposit(PlanDepositModel planDepositModel) {
 
         DepositConfiguration depositConfiguration = this.getConfiguration();
 
@@ -94,7 +94,7 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
             //get sumbitter
             this.setSubmitterId(token);
 
-            // First step, post call to dpsace, to create the entry.
+            // First step, post call to Zenodo, to create the entry.
             WebClient client = this.getWebClient();
 
             DepositConfiguration config = this.dspaceServiceProperties.getDepositConfiguration();
@@ -113,7 +113,11 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
             } catch (HttpClientErrorException | HttpServerErrorException ex) {
                 logger.error(ex.getMessage(), ex);
                 Map<String, String> parsedException = objectMapper.readValue(ex.getResponseBodyAsString(), Map.class);
-                throw new IOException(parsedException.get("message"), ex);
+                try {
+                    throw new IOException(parsedException.get("message"), ex);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
             }
 
         }
@@ -155,11 +159,11 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
         }
     }
 
-    private HttpHeaders createHeaders(String dpsaceToken, boolean isPatch, boolean isFile, boolean isUriList) {
+    private HttpHeaders createHeaders(String zenodoToken, boolean isPatch, boolean isFile, boolean isUriList) {
         HttpHeaders headers = new HttpHeaders();
         headers.add("X-XSRF-TOKEN", this.csrfToken);
         headers.add("Cookie", "DSPACE-XSRF-COOKIE=" + this.csrfToken);
-        headers.add("Authorization", dpsaceToken);
+        headers.add("Authorization", zenodoToken);
         headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
         if (isPatch) headers.setContentType(MediaType.valueOf("application/json-patch+json"));
         else if (isFile) headers.setContentType(MediaType.MULTIPART_FORM_DATA);
@@ -168,7 +172,7 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
         return headers;
     }
 
-    private String depositNewVersion(String token, String baseUrl, WebClient client, PlanModel planModel) throws IOException {
+    private String depositNewVersion(String token, String baseUrl, WebClient client, PlanModel planModel) {
 
 
         String itemId = this.getItemIdFromHandle(baseUrl, planModel.getPreviousDOI());
@@ -321,7 +325,7 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
     }
 
 
-    private String deposit(String token, String baseUrl, WebClient client, PlanModel planModel) throws IOException {
+    private String deposit(String token, String baseUrl, WebClient client, PlanModel planModel) {
         Map<String, Object> response;
         String url = baseUrl + "submission/workspaceitems?owningCollection=" + dspaceServiceProperties.getCollection();
         logger.debug(new MapLogEntry("Deposit")
@@ -376,7 +380,7 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
 
     }
 
-    private void uploadFiles(PlanModel planModel, String url, String token) throws IOException {
+    private void uploadFiles(PlanModel planModel, String url, String token) {
         if (planModel.getPdfFile() != null) this.uploadFile(planModel.getPdfFile(), url, token);
         if (planModel.getRdaJsonFile() != null) this.uploadFile(planModel.getRdaJsonFile(), url, token);
         if (planModel.getSupportingFilesZip() != null) this.uploadFile(planModel.getSupportingFilesZip(), url, token);
@@ -527,8 +531,8 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
 
     @Override
     public String getLogo() {
-        DepositConfiguration dpsaceConfig = this.dspaceServiceProperties.getDepositConfiguration();
-        if(dpsaceConfig != null && dpsaceConfig.isHasLogo() && this.dspaceServiceProperties.getLogo() != null && !this.dspaceServiceProperties.getLogo().isBlank()) {
+        DepositConfiguration zenodoConfig = this.dspaceServiceProperties.getDepositConfiguration();
+        if(zenodoConfig != null && zenodoConfig.isHasLogo() && this.dspaceServiceProperties.getLogo() != null && !this.dspaceServiceProperties.getLogo().isBlank()) {
             if (this.logo == null) {
                 try {
                     Resource resource = resourceLoader.getResource(this.dspaceServiceProperties.getLogo());
