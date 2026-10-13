@@ -5,12 +5,19 @@ import gr.cite.tools.logging.MapLogEntry;
 import org.json.JSONObject;
 import org.opencdmp.commonmodels.enums.PlanAccessType;
 import org.opencdmp.commonmodels.models.FileEnvelopeModel;
+import org.opencdmp.commonmodels.models.deposit.DepositPreviewModel;
+import org.opencdmp.commonmodels.models.deposit.PreviewFieldOption;
 import org.opencdmp.commonmodels.models.plan.PlanModel;
 import org.opencdmp.commonmodels.models.plugin.PluginUserFieldModel;
+import org.opencdmp.deposit.dspacerepository.configuration.semantics.DspaceSemanticsManifest;
+import org.opencdmp.deposit.dspacerepository.configuration.semantics.SemanticsProperties;
 import org.opencdmp.deposit.dspacerepository.model.*;
 import org.opencdmp.deposit.dspacerepository.model.builder.DspaceBuilder;
+import org.opencdmp.deposit.dspacerepository.model.builder.DspacePreviewMapper;
 import org.opencdmp.deposit.dspacerepository.service.storage.FileStorageService;
 import org.opencdmp.depositbase.repository.DepositConfiguration;
+import org.opencdmp.depositbase.repository.DepositPluginSettings;
+import org.opencdmp.depositbase.repository.DepositPreviewMergeHelper;
 import org.opencdmp.depositbase.repository.PlanDepositModel;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,6 +50,12 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
 
     private static final String CONFIGURATION_FIELD_EMAIL = "dspace-email";
     private static final String CONFIGURATION_FIELD_PASSWORD = "dspace-password";
+    private static final String SETTING_ORGANISATION_USERNAME = "organisation-username";
+    private static final String SETTING_ORGANISATION_PASSWORD = "organisation-password";
+    private static final String SETTING_COLLECTION = "collection";
+    private static final String SETTING_SUBMISSION_MODE = "submission-mode";
+    private static final String SUBMISSION_MODE_WORKFLOW = "workflow";
+    private static final String SUBMISSION_MODE_WORKSPACE = "workspace";
     private static final String DSPACE_OP_ADD = "add";
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
@@ -51,18 +64,21 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
     private final DspaceBuilder dspaceBuilder;
     private final FileStorageService storageService;
     private final ResourceLoader resourceLoader;
+    private final DspacePreviewMapper dspacePreviewMapper;
 
     private byte[] logo;
     private String csrfToken;
     private String submitterId;
     
     @Autowired
-    public DspaceDepositServiceImpl(DspaceServiceProperties dspaceServiceProperties, DspaceBuilder mapper, FileStorageService storageService, ResourceLoader resourceLoader){
+    public DspaceDepositServiceImpl(DspaceServiceProperties dspaceServiceProperties, DspaceBuilder mapper, FileStorageService storageService, ResourceLoader resourceLoader, SemanticsProperties semanticsProperties, DspacePreviewMapper dspacePreviewMapper){
         this.dspaceServiceProperties = dspaceServiceProperties;
         this.dspaceBuilder = mapper;
 	    this.storageService = storageService;
         this.resourceLoader = resourceLoader;
+        this.dspacePreviewMapper = dspacePreviewMapper;
         this.logo = null;
+        this.dspaceServiceProperties.getDepositConfiguration().setSemantics(DspaceSemanticsManifest.build(semanticsProperties, dspaceServiceProperties));
     }
 
     @Override
@@ -85,9 +101,15 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
                 }
             }
 
+            DepositPluginSettings settings = DepositPluginSettings.of(planDepositModel.getPlanModel(), depositConfiguration);
             if (token == null || token.isBlank()) {
-                token = this.setBearerToken(this.dspaceServiceProperties.getUsername(), this.dspaceServiceProperties.getPassword());
+                String organisationUsername = settings.text(SETTING_ORGANISATION_USERNAME);
+                String organisationPassword = settings.text(SETTING_ORGANISATION_PASSWORD);
+                if (organisationUsername != null && organisationPassword != null) token = this.setBearerToken(organisationUsername, organisationPassword);
+                else token = this.setBearerToken(this.dspaceServiceProperties.getUsername(), this.dspaceServiceProperties.getPassword());
             }
+            String collection = settings.text(SETTING_COLLECTION, this.dspaceServiceProperties.getCollection());
+            String submissionMode = settings.text(SETTING_SUBMISSION_MODE);
 
             String baseUrl = depositConfiguration.getRepositoryUrl();
 
@@ -105,9 +127,9 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
             try {
 
                 if (previousDOI == null) {
-                    return deposit(token, baseUrl, client, planDepositModel.getPlanModel());
+                    return deposit(token, baseUrl, client, planDepositModel, collection, submissionMode);
                 } else {
-                    return depositNewVersion(token, baseUrl, client, planDepositModel.getPlanModel());
+                    return depositNewVersion(token, baseUrl, client, planDepositModel, submissionMode);
                 }
 
             } catch (HttpClientErrorException | HttpServerErrorException ex) {
@@ -124,6 +146,28 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
 
         return null;
 
+    }
+
+    @Override
+    public DepositPreviewModel preview(PlanDepositModel planDepositModel) {
+        if (planDepositModel == null || planDepositModel.getPlanModel() == null) return null;
+        //  List<String> acceptedTypeCodes = this.dspaceServiceProperties.getAcceptedTypeCodes(); // this might be useful later
+        PlanModel planModel = planDepositModel.getPlanModel();
+        List<PatchEntity> entities = dspaceBuilder.build(planDepositModel.getPlanModel());
+        List<String> uploadFileNames = new ArrayList<>();
+
+        if (planModel.getPdfFile() != null && planModel.getPdfFile().getFilename() != null) uploadFileNames.add(planModel.getPdfFile().getFilename());
+        if (planModel.getRdaJsonFile() != null && planModel.getRdaJsonFile().getFilename() != null) uploadFileNames.add(planModel.getRdaJsonFile().getFilename());
+        if (planModel.getSupportingFilesZip() != null && planModel.getSupportingFilesZip().getFilename() != null) uploadFileNames.add(planModel.getSupportingFilesZip().getFilename());
+
+        DepositPreviewModel preview = this.dspacePreviewMapper.toPreview(entities, uploadFileNames);
+        DepositPreviewMergeHelper.merge(preview, planDepositModel.getStoredFields(), planDepositModel.getStoredGroups());
+        return preview;
+    }
+
+    @Override
+    public List<PreviewFieldOption> searchVocabulary(String fieldCode, String like) {
+        return this.dspacePreviewMapper.searchVocabulary(fieldCode, like);
     }
 
     private void setCsrfToken(){
@@ -172,10 +216,10 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
         return headers;
     }
 
-    private String depositNewVersion(String token, String baseUrl, WebClient client, PlanModel planModel) {
+    private String depositNewVersion(String token, String baseUrl, WebClient client, PlanDepositModel planDepositModel, String submissionMode) {
 
 
-        String itemId = this.getItemIdFromHandle(baseUrl, planModel.getPreviousDOI());
+        String itemId = this.getItemIdFromHandle(baseUrl, planDepositModel.getPlanModel().getPreviousDOI());
 
         String workSpaceItemId = this.createNewVersion(itemId, token, client);
 
@@ -183,27 +227,47 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
 
         String workSpaceItemUrl = baseUrl + "submission/workspaceitems/" + workSpaceItemId;
 
-        this.sendDataFields(token, workSpaceItemUrl, client, planModel,false);
+        this.sendDataFields(token, workSpaceItemUrl, client, planDepositModel,false);
 
-        this.uploadFiles(planModel, workSpaceItemUrl, token);
+        this.uploadFiles(planDepositModel.getPlanModel(), workSpaceItemUrl, token);
+
+        return this.submit(token, baseUrl, client, planDepositModel, workSpaceItemUrl, submissionMode);
+    }
+
+    private String submit(String token, String baseUrl, WebClient client, PlanDepositModel planDepositModel, String workSpaceItemUrl, String submissionMode) {
+        if (SUBMISSION_MODE_WORKSPACE.equals(submissionMode)) return this.getIdentifier(this.getItemId(workSpaceItemUrl, token), token);
 
         String workFlowId = this.createWorkflow(workSpaceItemUrl, token);
 
-        String newItemId = this.getItemId(workFlowId, token);
+        String itemId = this.getItemId(baseUrl + "workflow/workflowitems/" + workFlowId, token);
+
+        if (SUBMISSION_MODE_WORKFLOW.equals(submissionMode)) return this.getIdentifier(itemId, token);
 
         String claimedTaskId = this.createClaimedTask(workFlowId, token);
 
         this.submitTask(claimedTaskId, token);
 
-        String accessUrl = baseUrl + "core/items/" + newItemId;
-        this.sendDataFields(token, accessUrl, client, planModel, true);
+        String accessUrl = baseUrl + "core/items/" + itemId;
+        this.sendDataFields(token, accessUrl, client, planDepositModel, true);
 
-        if(planModel.getAccessType().equals(PlanAccessType.Restricted)) this.sendPatchBooleanRequest(client, accessUrl, this.dspaceBuilder.buildBooleanValue(false, "replace","/discoverable"), token);
+        if(planDepositModel.getPlanModel().getAccessType().equals(PlanAccessType.Restricted)) this.sendPatchBooleanRequest(client, accessUrl, this.dspaceBuilder.buildBooleanValue(false, "replace","/discoverable"), token);
 
-        return this.getHandle(newItemId, token);
+        return this.getHandle(itemId, token);
+    }
+
+    // An item outside the archive usually has no handle yet, so its uuid stands in for it.
+    private String getIdentifier(String itemId, String token) {
+        String handle = null;
+        try {
+            handle = this.getHandle(itemId, token);
+        } catch (HttpClientErrorException ex) {
+            logger.warn(new MapLogEntry("Could not read the handle of the submitted item").And("itemId", itemId).And("status", ex.getStatusCode()));
+        }
+        return handle != null && !handle.isBlank() ? handle : itemId;
     }
 
     private String getItemIdFromHandle(String recordUrl, String handle) {
+        if (isUuid(handle)) return handle;
         ResponseEntity<Map> response = this.getWebClient()
                 .get()
                 .uri(recordUrl + "pid/find?id=" + handle)
@@ -325,12 +389,12 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
     }
 
 
-    private String deposit(String token, String baseUrl, WebClient client, PlanModel planModel) {
+    private String deposit(String token, String baseUrl, WebClient client, PlanDepositModel planDepositModel, String collection, String submissionMode) {
         Map<String, Object> response;
-        String url = baseUrl + "submission/workspaceitems?owningCollection=" + dspaceServiceProperties.getCollection();
+        String url = baseUrl + "submission/workspaceitems?owningCollection=" + collection;
         logger.debug(new MapLogEntry("Deposit")
                 .And("url", url)
-                .And("plan", planModel));
+                .And("plan", planDepositModel.getPlanModel()));
 
         response = client.post().uri(url).headers(httpHeaders -> {
             httpHeaders.putAll(this.createHeaders(token, false, false,false));
@@ -345,35 +409,24 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
 
         url = baseUrl + "submission/workspaceitems/" + id;
 
-        this.sendDataFields(token, url, client, planModel, false);
+        this.sendDataFields(token, url, client, planDepositModel, false);
 
-        this.uploadFiles(planModel, url, token);
+        this.uploadFiles(planDepositModel.getPlanModel(), url, token);
 
-        String workFlowId = this.createWorkflow(url, token);
-
-        String itemId = this.getItemId(workFlowId, token);
-
-        String claimedTaskId = this.createClaimedTask(workFlowId, token);
-
-        this.submitTask(claimedTaskId, token);
-
-        String accessUrl = baseUrl + "core/items/" + itemId;
-        this.sendDataFields(token, accessUrl, client, planModel, true);
-
-        if(planModel.getAccessType().equals(PlanAccessType.Restricted)) this.sendPatchBooleanRequest(client, accessUrl, this.dspaceBuilder.buildBooleanValue(false, "replace","/discoverable"), token);
-
-        return this.getHandle(itemId, token);
+        return this.submit(token, baseUrl, client, planDepositModel, url, submissionMode);
     }
 
-    private void sendDataFields(String token, String url, WebClient client, PlanModel planModel, boolean isPublished){
+    private void sendDataFields(String token, String url, WebClient client, PlanDepositModel planDepositModel, boolean isPublished){
         if(!isPublished){
-            List<PatchEntity> entities = dspaceBuilder.build(planModel);
+            List<PatchEntity> entities = dspaceBuilder.build(planDepositModel.getPlanModel());
+            this.dspacePreviewMapper.applyOverrides(entities,planDepositModel.getEditedFields(), planDepositModel.getEditedGroups());
             this.sendPatchRequest(client, url, entities, token);
             this.sendPatchBooleanRequest(client, url, this.dspaceBuilder.buildBooleanValue(true, DSPACE_OP_ADD, "/sections/license/granted"), token);
 
 
         }else{
-            List<PatchEntity> entities = dspaceBuilder.applySemantics(planModel,true);
+            List<PatchEntity> entities = dspaceBuilder.applySemantics(planDepositModel.getPlanModel(),true);
+            this.dspacePreviewMapper.applyOverrides(entities,planDepositModel.getEditedFields(), planDepositModel.getEditedGroups());
             this.sendPatchRequest(client, url, entities, token);
         }
 
@@ -445,11 +498,11 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
         return String.valueOf(respMap.get("id"));
     }
 
-    private String getItemId(String workflowId, String token){
+    private String getItemId(String submissionItemUrl, String token){
         RestTemplate restTemplate = new RestTemplate();
 
         HttpHeaders headers = this.createHeaders(token, false, false,false);
-        String url = this.dspaceServiceProperties.getDepositConfiguration().getRepositoryUrl() + "workflow/workflowitems/" + workflowId + "/item";
+        String url = submissionItemUrl + "/item";
         Object response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), Object.class).getBody();
         Map<String, Object> respMap = objectMapper.convertValue(response, Map.class);
 
@@ -462,6 +515,7 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
         HttpHeaders headers = this.createHeaders(token, false, false,true);
 
         String poolTaskId = this.getPoolTaskId(workFlowId, token);
+        if (poolTaskId == null) throw new RuntimeException("The DSpace account cannot approve its own submission, so the record could not be published straight to the archive. Make the account a reviewer of the collection, or submit records to the collection's workflow instead.");
 
         String pooltaskUrl = this.dspaceServiceProperties.getDepositConfiguration().getRepositoryUrl() + "workflow/pooltasks/" + poolTaskId;
         Object response = restTemplate.postForEntity(this.dspaceServiceProperties.getDepositConfiguration().getRepositoryUrl() + "workflow/claimedtasks", new HttpEntity<>(pooltaskUrl, headers), Object.class).getBody();
@@ -477,9 +531,11 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
         String url = this.dspaceServiceProperties.getDepositConfiguration().getRepositoryUrl() + "workflow/pooltasks/search/findByUser?uuid=" + this.submitterId;
         Object response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), Object.class).getBody();
         Map<String, Object> respMap = objectMapper.convertValue(response, Map.class);
-        Object embedded = respMap.get("_embedded");
+        Object embedded = respMap != null ? respMap.get("_embedded") : null;
+        if (embedded == null) return null;
         respMap = objectMapper.convertValue(embedded, Map.class);
         List<Object> pooltasks = (List<Object>) respMap.get("pooltasks");
+        if (pooltasks == null) return null;
         for(Object pooltask: pooltasks){
             JsonNode task = objectMapper.valueToTree(pooltask);
             JsonNode workFlowItem = task.get("_embedded").get("workflowitem");
@@ -516,6 +572,15 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
         return (String) respMap.get("handle");
     }
 
+
+    private static boolean isUuid(String value) {
+        try {
+            UUID.fromString(value);
+            return true;
+        } catch (IllegalArgumentException | NullPointerException ex) {
+            return false;
+        }
+    }
 
     @Override
     public DepositConfiguration getConfiguration() {

@@ -4,17 +4,18 @@ import gr.cite.tools.logging.LoggerService;
 import org.opencdmp.commonmodels.enums.PlanAccessType;
 import org.opencdmp.commonmodels.models.PlanUserModel;
 import org.opencdmp.commonmodels.models.description.*;
-import org.opencdmp.commonmodels.models.descriptiotemplate.DefinitionModel;
-import org.opencdmp.commonmodels.models.descriptiotemplate.fielddata.RadioBoxDataModel;
-import org.opencdmp.commonmodels.models.descriptiotemplate.fielddata.SelectDataModel;
-import org.opencdmp.commonmodels.models.plan.PlanBlueprintValueModel;
+import org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.fielddata.RadioBoxDataModel;
+import org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.fielddata.SelectDataModel;
 import org.opencdmp.commonmodels.models.plan.PlanModel;
-import org.opencdmp.commonmodels.models.planblueprint.SectionModel;
+import org.opencdmp.commonmodels.models.plandescriptionfields.FieldModel;
+import org.opencdmp.commonmodels.models.plandescriptionfields.PropertyDefinitionFieldSetItemModel;
+import org.opencdmp.commonmodels.models.plandescriptionfields.PropertyDefinitionFieldSetModel;
 import org.opencdmp.commonmodels.models.reference.ReferenceModel;
 import org.opencdmp.deposit.dspacerepository.configuration.semantics.SemanticsProperties;
 import org.opencdmp.deposit.dspacerepository.model.*;
 import org.opencdmp.deposit.dspacerepository.service.dspace.DspaceDepositServiceImpl;
 import org.opencdmp.deposit.dspacerepository.service.dspace.DspaceServiceProperties;
+import org.opencdmp.depositbase.repository.DepositPluginSettings;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
@@ -36,7 +37,6 @@ public class DspaceBuilder {
     private final  DspaceServiceProperties dspaceServiceProperties;
     private final  SemanticsProperties semanticsProperties;
     private static final String DSPACE_OP_ADD = "add";
-    private static final String DSPACE_DC_TYPE = "Dataset";
 
     private static final String SEMANTIC_PROVENANCE = "provenance";
     private static final String SEMANTIC_IDENTIFIER = "identifier";
@@ -49,6 +49,14 @@ public class DspaceBuilder {
     private static final String SEMANTIC_DATE_ACCESSIONED = "date.accessioned";
     private static final String SEMANTIC_DATE_AVAILABLE = "date.available";
     private static final String SEMANTIC_LANGUAGE_PATH = "/sections/publicationStep/dc.language.iso";
+    private static final String SEMANTIC_PUBLISHER_PATH = "/sections/publicationStep/dc.publisher";
+    private static final String SEMANTIC_RIGHTS_PATH = "/sections/publicationStep/dc.rights";
+    private static final String SEMANTIC_RIGHTS_URI_PATH = "/sections/publicationStep/dc.rights.uri";
+    private static final String SETTING_ITEM_TYPE = "item-type";
+    private static final String SETTING_PUBLISHER = "publisher";
+    private static final String SETTING_RIGHTS = "rights";
+    private static final String SETTING_RIGHTS_URI = "rights-uri";
+    private static final String PUBLIC_PAGE_PATH = "/sections/publicationStep/dc.identifier.uri";
 
 
     @Autowired
@@ -66,9 +74,22 @@ public class DspaceBuilder {
         DateFormat df = new SimpleDateFormat("yyyy-MM-dd");
         entities.addAll(this.buildSingleValue(df.format(new Date()),DSPACE_OP_ADD, "/sections/publicationStep/dc.date.issued"));
         entities.addAll(this.buildDescription(planModel.getDescription(), DSPACE_OP_ADD, "/sections/traditionalpagetwo/dc.description.abstract"));
-        if(planModel.getAccessType().equals(PlanAccessType.Public)) entities.addAll(this.buildIsIdenticalTo(planModel,DSPACE_OP_ADD,"/sections/publicationStep/dc.identifier.uri"));
+        List<PatchEntity> semantics = this.applySemantics(planModel,false);
+        if(planModel.getAccessType().equals(PlanAccessType.Public)) {
+            PatchEntity publicPage = this.buildIsIdenticalTo(planModel, DSPACE_OP_ADD, PUBLIC_PAGE_PATH).get(0);
+            PatchEntity uris = semantics.stream().filter(x -> PUBLIC_PAGE_PATH.equals(x.getPath())).findFirst().orElse(null);
+            if (uris == null) entities.add(publicPage);
+            else {
+                // the answers for the URIs are one "add" that replaces the whole field, so the public page goes first in that same list
+                List<Map<String, Object>> values = new ArrayList<>(publicPage.getValue());
+                Object publicPageUrl = publicPage.getValue().get(0).get("value");
+                uris.getValue().stream().filter(x -> !publicPageUrl.equals(x.get("value"))).forEach(values::add);
+                for (int place = 0; place < values.size(); place++) values.get(place).put("place", place);
+                uris.setValue(values);
+            }
+        }
 
-        entities.addAll(this.applySemantics(planModel,false));
+        entities.addAll(semantics);
         return entities;
     }
 
@@ -104,7 +125,7 @@ public class DspaceBuilder {
         return entityList;
     }
 
-    public List<PatchEntity> buildOwners(PlanModel plan, String op, String path) {
+    public List<PatchEntity> buildOwners(List<PlanUserModel> users, String op, String path) {
 
         List<PatchEntity> entityList = new ArrayList<>();
 
@@ -114,18 +135,16 @@ public class DspaceBuilder {
         List<Map<String, Object>> v = new ArrayList<>();
 
         int place = 0;
-        if (plan.getUsers() != null) {
-            for (PlanUserModel planUser: plan.getUsers()) {
+        for (PlanUserModel planUser: users) {
 
-                Map<String, Object> map = new HashMap<>();
-                map.put("confidence", -1);
-                map.put("place", place);
-                map.put("value", planUser.getUser().getName());
-                map.put("display", planUser.getUser().getName());
-                v.add(map);
+            Map<String, Object> map = new HashMap<>();
+            map.put("confidence", -1);
+            map.put("place", place);
+            map.put("value", planUser.getUser().getName());
+            map.put("display", planUser.getUser().getName());
+            v.add(map);
 
-                place++;
-            }
+            place++;
         }
 
         entity.setValue(v);
@@ -133,22 +152,20 @@ public class DspaceBuilder {
         return entityList;
     }
 
-    public List<PatchEntity> buildOwnerListSemantic(Collection<String> semantics, PlanModel plan, String op, String path) {
+    public List<PatchEntity> buildOwnerListSemantic(Collection<String> semantics, List<PlanUserModel> users, String op, String path) {
         List<Map<String, Object>> valueList = new ArrayList<>();
 
         int place = 0;
-        if (plan.getUsers() != null) {
-            for (PlanUserModel planUser: plan.getUsers()) {
+        for (PlanUserModel planUser: users) {
 
-                Map<String, Object> map = new HashMap<>();
-                map.put("confidence", -1);
-                map.put("place", place);
-                map.put("value", planUser.getUser().getName());
-                map.put("display", planUser.getUser().getName());
-                valueList.add(map);
+            Map<String, Object> map = new HashMap<>();
+            map.put("confidence", -1);
+            map.put("place", place);
+            map.put("value", planUser.getUser().getName());
+            map.put("display", planUser.getUser().getName());
+            valueList.add(map);
 
-                place++;
-            }
+            place++;
         }
 
         for (String value : semantics) {
@@ -234,18 +251,19 @@ public class DspaceBuilder {
 
     }
 
-    public List<PatchEntity> buildTypeListSemantic(Collection<String> semantics, String op, String path) {
+    public List<PatchEntity> buildTypeListSemantic(String defaultTypeValue, Collection<String> semantics, String op, String path) {
         List<Map<String, Object>> valueList = new ArrayList<>();
         Map<String, Object> defaultType = new HashMap<>();
 
-        defaultType.put("value", "Dataset");
-        defaultType.put("display", "Dataset");
+        defaultType.put("value", defaultTypeValue);
+        defaultType.put("display", defaultTypeValue);
         defaultType.put("confidence", -1);
         defaultType.put("place", 0);
         valueList.add(defaultType);
 
         int place = 1;
         for (String value : semantics) {
+            if (value.equals(defaultTypeValue)) continue;
             Map<String, Object> map = new HashMap<>();
             map.put("value", value);
             map.put("display", value);
@@ -286,37 +304,22 @@ public class DspaceBuilder {
         return Collections.singletonList(patch);
     }
 
-    private List<org.opencdmp.commonmodels.models.descriptiotemplate.FieldModel> findDescriptionSemanticValues(String relatedId, DefinitionModel definitionModel){
-        return definitionModel.getAllField().stream().filter(x-> x.getSemantics() != null && x.getSemantics().contains(relatedId)).toList();
+    private List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> findSchematicValues(String relatedId, List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fields){
+        return fields.stream().filter(x-> x.getSemantics() != null && x.getSemantics().contains(relatedId)).toList();
     }
 
-    private List<org.opencdmp.commonmodels.models.planblueprint.FieldModel> getFieldOfSemantic(PlanModel plan, String semanticKey){
-        List<org.opencdmp.commonmodels.models.planblueprint.FieldModel> fields = new ArrayList<>();
-        if (plan == null || plan.getPlanBlueprint() == null || plan.getPlanBlueprint().getDefinition() == null || plan.getPlanBlueprint().getDefinition().getSections() == null) return fields;
-        for (SectionModel sectionModel : plan.getPlanBlueprint().getDefinition().getSections()){
-            if (sectionModel.getFields() != null){
-                org.opencdmp.commonmodels.models.planblueprint.FieldModel fieldModel = sectionModel.getFields().stream().filter(x-> x.getSemantics() != null && x.getSemantics().contains(semanticKey)).findFirst().orElse(null);
-                if (fieldModel != null) fields.add(fieldModel);
-            }
-        }
-        return fields;
-    }
-
-    private PlanBlueprintValueModel getPlanBlueprintValue(PlanModel plan, UUID id){
-        if (plan == null || plan.getProperties() == null || plan.getProperties().getPlanBlueprintValues() == null) return null;
-        return plan.getProperties().getPlanBlueprintValues().stream().filter(x-> x.getFieldId().equals(id)).findFirst().orElse(null);
-    }
-
-
-    private Set<String> extractSchematicValues(List<org.opencdmp.commonmodels.models.descriptiotemplate.FieldModel> fields, PropertyDefinitionModel propertyDefinition) {
+    private Set<String> extractSchematicValues(List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fields, Map<String, PropertyDefinitionFieldSetModel> fieldSets) {
         Set<String> values = new HashSet<>();
-        for (org.opencdmp.commonmodels.models.descriptiotemplate.FieldModel field : fields) {
+        for (org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field : fields) {
             if (field.getData() == null) continue;
-            List<FieldModel> valueFields = this.findValueFieldsByIds(field.getId(), propertyDefinition);
+            List<FieldModel> valueFields = this.findValueFieldsByIds(field.getId(), fieldSets);
             for (FieldModel valueField : valueFields) {
                 switch (field.getData().getFieldType()) {
                     case FREE_TEXT, TEXT_AREA, RICH_TEXT_AREA -> {
                         if (valueField.getTextValue() != null && !valueField.getTextValue().isBlank()) values.add(valueField.getTextValue());
+                    }
+                    case NUMBER -> {
+                        if (valueField.getNumberValue() != null) values.add(String.valueOf(valueField.getNumberValue()));
                     }
                     case BOOLEAN_DECISION, CHECK_BOX -> {
                         if (valueField.getBooleanValue() != null) values.add(valueField.getBooleanValue().toString());
@@ -373,10 +376,10 @@ public class DspaceBuilder {
     }
 
 
-    private List<FieldModel> findValueFieldsByIds(String fieldId, PropertyDefinitionModel definitionModel){
+    private List<FieldModel> findValueFieldsByIds(String fieldId, Map<String, PropertyDefinitionFieldSetModel> fieldSets){
         List<FieldModel> models = new ArrayList<>();
-        if (definitionModel == null || definitionModel.getFieldSets() == null || definitionModel.getFieldSets().isEmpty()) return models;
-        for (PropertyDefinitionFieldSetModel propertyDefinitionFieldSetModel : definitionModel.getFieldSets().values()){
+        if (fieldSets == null || fieldSets.isEmpty()) return models;
+        for (PropertyDefinitionFieldSetModel propertyDefinitionFieldSetModel : fieldSets.values()){
             if (propertyDefinitionFieldSetModel == null ||propertyDefinitionFieldSetModel.getItems() == null || propertyDefinitionFieldSetModel.getItems().isEmpty()) continue;
             for (PropertyDefinitionFieldSetItemModel propertyDefinitionFieldSetItemModel : propertyDefinitionFieldSetModel.getItems()){
                 if (propertyDefinitionFieldSetItemModel == null ||propertyDefinitionFieldSetItemModel.getFields() == null || propertyDefinitionFieldSetItemModel.getFields().isEmpty()) continue;
@@ -393,50 +396,27 @@ public class DspaceBuilder {
 
     public List<PatchEntity> applySemantics(PlanModel planModel, boolean isPublished) {
         List<PatchEntity> entityList = new ArrayList<>();
-        List<SemanticsProperties.PathName> acceptedSemantics = this.semanticsProperties.getAvailable();
+        List<SemanticsProperties.PathName> acceptedSemantics = this.semanticsProperties.getAvailable() != null ? this.semanticsProperties.getAvailable() : List.of();
 
         Map<String, Set<String>> pathToValuesMap = new HashMap<>();
+        DepositPluginSettings settings = DepositPluginSettings.of(planModel, this.dspaceServiceProperties.getDepositConfiguration());
+        String defaultType = settings.text(SETTING_ITEM_TYPE, this.dspaceServiceProperties.getDefaultType());
+        List<PlanUserModel> authors = settings.authors(planModel.getUsers());
 
-        if (planModel.getDescription() != null) {
+        if (planModel.getDescriptions() != null) {
             for (DescriptionModel descriptionModel : planModel.getDescriptions()) {
                 for (SemanticsProperties.PathName relatedName : acceptedSemantics) {
-                    List<org.opencdmp.commonmodels.models.descriptiotemplate.FieldModel> fieldsWithSemantics =
-                            this.findDescriptionSemanticValues(
-                                    relatedName.getName(),
-                                    descriptionModel.getDescriptionTemplate().getDefinition()
-                            );
-                    Set<String> values = extractSchematicValues(fieldsWithSemantics, descriptionModel.getProperties());
-                    pathToValuesMap.computeIfAbsent(relatedName.getPath(), k -> new HashSet<>()).addAll(values);
+                    List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fieldsWithSemantics = this.findSchematicValues(relatedName.getName(), descriptionModel.getDescriptionTemplate().getDefinition().getAllField());
+                    Set<String> values = extractSchematicValues(fieldsWithSemantics, descriptionModel.getProperties().getFieldSets());
+                    if (!values.isEmpty()) pathToValuesMap.computeIfAbsent(relatedName.getPath(), k -> new HashSet<>()).addAll(values);
                 }
             }
         }
 
         for (SemanticsProperties.PathName relatedName : acceptedSemantics) {
-            List<org.opencdmp.commonmodels.models.planblueprint.FieldModel> fieldOfSemantic =
-                    this.getFieldOfSemantic(planModel, relatedName.getName());
-
-            for (org.opencdmp.commonmodels.models.planblueprint.FieldModel field : fieldOfSemantic) {
-                PlanBlueprintValueModel valueModel = this.getPlanBlueprintValue(planModel, field.getId());
-
-                if (valueModel != null) {
-                    if (valueModel.getDateValue() != null) {
-                        String dateVal = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-                                .withZone(ZoneId.systemDefault())
-                                .format(valueModel.getDateValue());
-                        pathToValuesMap.computeIfAbsent(relatedName.getPath(), k -> new HashSet<>()).add(dateVal);
-                    }
-
-                    if (valueModel.getNumberValue() != null) {
-                        pathToValuesMap.computeIfAbsent(relatedName.getPath(), k -> new HashSet<>())
-                                .add(valueModel.getNumberValue().toString());
-                    }
-
-                    if (valueModel.getValue() != null) {
-                        pathToValuesMap.computeIfAbsent(relatedName.getPath(), k -> new HashSet<>())
-                                .add(valueModel.getValue());
-                    }
-                }
-            }
+            List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fieldsWithSemantics = this.findSchematicValues(relatedName.getName(), planModel.getPlanBlueprint().getDefinition().getAllField());
+            Set<String> values = extractSchematicValues(fieldsWithSemantics, planModel.getProperties().getFieldSets());
+            if (!values.isEmpty()) pathToValuesMap.computeIfAbsent(relatedName.getPath(), k -> new HashSet<>()).addAll(values);
         }
 
         for (Map.Entry<String, Set<String>> entry : pathToValuesMap.entrySet()) {
@@ -448,15 +428,16 @@ public class DspaceBuilder {
                     entityList.addAll(this.buildListSemantic(values, DSPACE_OP_ADD, path));
 
                 } else if (path.contains(SEMANTIC_TYPE)) {
-                    List<String> allowedTypes = this.dspaceServiceProperties.getAcceptedTypeCodes();
+                    List<String> allowedTypes = this.dspaceServiceProperties.getAcceptedTypeCodes() != null ? this.dspaceServiceProperties.getAcceptedTypeCodes() : List.of();
+                    String otherType = allowedTypes.stream().filter(SEMANTIC_OTHER::equalsIgnoreCase).findFirst().orElse(SEMANTIC_OTHER);
 
                     Set<String> validatedValues = values.stream()
-                            .map(v -> allowedTypes.contains(v) ? v : SEMANTIC_OTHER)
+                            .map(v -> allowedTypes.stream().filter(v::equalsIgnoreCase).findFirst().orElse(otherType))
                             .collect(Collectors.toSet());
 
-                    entityList.addAll(this.buildTypeListSemantic(validatedValues, DSPACE_OP_ADD, path));
+                    entityList.addAll(this.buildTypeListSemantic(defaultType, validatedValues, DSPACE_OP_ADD, path));
                 } else if (path.contains(SEMANTIC_AUTHOR)) {
-                    entityList.addAll(this.buildOwnerListSemantic(values,planModel, DSPACE_OP_ADD, path));
+                    entityList.addAll(this.buildOwnerListSemantic(values, authors, DSPACE_OP_ADD, path));
                 } else {
                     for (String value : values) {
                         entityList.addAll(this.buildSemantic(value, DSPACE_OP_ADD, path));
@@ -475,7 +456,7 @@ public class DspaceBuilder {
             boolean hasType = entityList.stream()
                     .anyMatch(entity -> entity.getPath().equals(SEMANTIC_TYPE_PATH));
 
-            if(!hasType) entityList.addAll(this.buildSingleValue(this.dspaceServiceProperties.getDefaultType(), DSPACE_OP_ADD, SEMANTIC_TYPE_PATH));
+            if(!hasType) entityList.addAll(this.buildSingleValue(defaultType, DSPACE_OP_ADD, SEMANTIC_TYPE_PATH));
 
             boolean hasLanguage = entityList.stream()
                     .anyMatch(entity -> entity.getPath().equals(SEMANTIC_LANGUAGE_PATH));
@@ -485,10 +466,19 @@ public class DspaceBuilder {
             boolean hasAuthors = entityList.stream()
                     .anyMatch(entity -> entity.getPath().equals(SEMANTIC_AUTHOR_PATH));
 
-            if(!hasAuthors) entityList.addAll(this.buildOwners(planModel, DSPACE_OP_ADD, SEMANTIC_AUTHOR_PATH));
+            if(!hasAuthors && !authors.isEmpty()) entityList.addAll(this.buildOwners(authors, DSPACE_OP_ADD, SEMANTIC_AUTHOR_PATH));
+
+            entityList.addAll(this.buildDefault(entityList, settings.text(SETTING_PUBLISHER), SEMANTIC_PUBLISHER_PATH));
+            entityList.addAll(this.buildDefault(entityList, settings.text(SETTING_RIGHTS), SEMANTIC_RIGHTS_PATH));
+            entityList.addAll(this.buildDefault(entityList, settings.text(SETTING_RIGHTS_URI), SEMANTIC_RIGHTS_URI_PATH));
         }
 
         return entityList;
+    }
+
+    private List<PatchEntity> buildDefault(List<PatchEntity> entityList, String value, String path) {
+        if (value == null || entityList.stream().anyMatch(entity -> entity.getPath().equals(path))) return List.of();
+        return this.buildSemantic(value, DSPACE_OP_ADD, path);
     }
 
 }

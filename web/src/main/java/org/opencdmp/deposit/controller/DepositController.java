@@ -3,8 +3,10 @@ package org.opencdmp.deposit.controller;
 import gr.cite.tools.auditing.AuditService;
 import gr.cite.tools.logging.LoggerService;
 import gr.cite.tools.logging.MapLogEntry;
+import org.opencdmp.commonmodels.models.deposit.DepositPreviewModel;
 import org.opencdmp.commonmodels.models.plan.PlanModel;
 import org.opencdmp.deposit.dspacerepository.audit.AuditableAction;
+import org.opencdmp.deposit.dspacerepository.model.builder.DspacePreviewMapper;
 import org.opencdmp.depositbase.repository.DepositConfiguration;
 import org.opencdmp.deposit.dspacerepository.service.dspace.DspaceDepositService;
 import org.opencdmp.depositbase.repository.PlanDepositModel;
@@ -21,22 +23,33 @@ public class DepositController implements org.opencdmp.depositbase.repository.De
     private static final LoggerService logger = new LoggerService(LoggerFactory.getLogger(DepositController.class));
 
     private final DspaceDepositService depositClient;
-
     private final AuditService auditService;
 
     @Autowired
-    public DepositController(DspaceDepositService depositClient, AuditService auditService) {
+    public DepositController(DspaceDepositService depositClient, DspacePreviewMapper dspacePreviewMapper, AuditService auditService) {
         this.depositClient = depositClient;
-	    this.auditService = auditService;
+        this.auditService = auditService;
+    }
+
+    public DepositPreviewModel preview(@RequestBody PlanDepositModel planDepositModel)
+    {
+        logger.debug(new MapLogEntry("Preview " + PlanModel.class.getSimpleName()).And("planDepositModel", planDepositModel));
+
+        DepositPreviewModel previewModel = depositClient.preview(planDepositModel);
+
+        this.auditService.track(AuditableAction.Deposit_Preview, Map.ofEntries(
+                new AbstractMap.SimpleEntry<String, Object>("planDepositModel", planDepositModel)
+        ));
+        return previewModel;
     }
 
     public String deposit(@RequestBody PlanDepositModel planDepositModel) {
-        logger.debug(new MapLogEntry("deposit " + PlanModel.class.getSimpleName()).And("planDepositModel", planDepositModel));
+        logger.debug(new MapLogEntry("deposit " + PlanModel.class.getSimpleName()).And("planId", planDepositModel.getPlanModel() != null ? planDepositModel.getPlanModel().getId() : null));
 
         String doiId = depositClient.deposit(planDepositModel);
         
         this.auditService.track(AuditableAction.Deposit_Deposit, Map.ofEntries(
-                new AbstractMap.SimpleEntry<String, Object>("planDepositModel", planDepositModel)
+                new AbstractMap.SimpleEntry<String, Object>("planId", planDepositModel.getPlanModel() != null ? planDepositModel.getPlanModel().getId() : null)
         ));
         return doiId;
     }

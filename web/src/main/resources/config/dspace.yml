@@ -16,7 +16,141 @@ dspace:
     redirect-uri:
     has-logo: ${DEPOSIT_DSPACE_HAS_LOGO:true}
     useSharedStorage: ${DEPOSIT_DSPACE_USE_SHARED_STORAGE:false}
+    supports-preview: ${DEPOSIT_DSPACE_SUPPORTS_PREVIEW:true}
+    uploaded-files:
+      - PlanDocument
+      - RdaJson
+      - SupportingFiles
     configuration-fields:
+      - code: publish-ways
+        type: 3
+        label: "Ways to publish"
+        group: "Who publishes"
+        description: "Which accounts users can publish under."
+        defaultValue: "both"
+        options:
+          - label: "The organisation's account and users' own accounts"
+            value: "both"
+          - label: "Only the organisation's account"
+            value: "organisation"
+          - label: "Only users' own accounts"
+            value: "own"
+      - code: publish-preselected
+        type: 3
+        label: "Preselected"
+        group: "Who publishes"
+        description: "The choice users see selected when both are allowed. Users with saved credentials always start on their own account."
+        defaultValue: "own"
+        options:
+          - label: "Users' own accounts"
+            value: "own"
+          - label: "The organisation's account"
+            value: "organisation"
+      - code: organisation-account-name
+        type: 0
+        label: "Organisation account name"
+        group: "Who publishes"
+        description: "What users see in “Publish as”. Empty: “The organisation's DSpace account”."
+      - code: organisation-username
+        type: 0
+        label: "Username"
+        group: "Organisation account"
+        description: "The email of the DSpace account to publish under. Empty: the installation's account is used."
+        authInfo: true
+      - code: organisation-password
+        type: 0
+        label: "Password"
+        group: "Organisation account"
+        description: "The password of that account. Empty: the installation's account is used."
+        authInfo: true
+      - code: collection
+        type: 0
+        label: "Collection"
+        group: "DSpace record"
+        description: "The id of the collection records are submitted to. Empty: the installation's value."
+      - code: item-type
+        type: 3
+        label: "Default item type"
+        group: "DSpace record"
+        description: "The type every record has; types its plan sets are added after it. Empty: the installation's value."
+        options:
+          - { label: "Animation", value: "Animation" }
+          - { label: "Article", value: "Article" }
+          - { label: "Book", value: "Book" }
+          - { label: "Book chapter", value: "Book chapter" }
+          - { label: "Dataset", value: "Dataset" }
+          - { label: "Learning Object", value: "Learning Object" }
+          - { label: "Image", value: "Image" }
+          - { label: "Image, 3-D", value: "Image, 3-D" }
+          - { label: "Map", value: "Map" }
+          - { label: "Musical Score", value: "Musical Score" }
+          - { label: "Plan or blueprint", value: "Plan or blueprint" }
+          - { label: "Preprint", value: "Preprint" }
+          - { label: "Presentation", value: "Presentation" }
+          - { label: "Recording, acoustical", value: "Recording, acoustical" }
+          - { label: "Recording, musical", value: "Recording, musical" }
+          - { label: "Recording, oral", value: "Recording, oral" }
+          - { label: "Software", value: "Software" }
+          - { label: "Technical Report", value: "Technical Report" }
+          - { label: "Thesis", value: "Thesis" }
+          - { label: "Video", value: "Video" }
+          - { label: "Working Paper", value: "Working Paper" }
+          - { label: "Other", value: "Other" }
+      - code: submission-mode
+        type: 3
+        label: "Submission"
+        group: "DSpace record"
+        description: "How far records go in DSpace. Publishing straight to the archive needs an account that reviews the collection."
+        defaultValue: "archive"
+        options:
+          - label: "Published in the archive"
+            value: "archive"
+          - label: "Submitted to the collection's review workflow"
+            value: "workflow"
+          - label: "Left as a draft in the account's workspace"
+            value: "workspace"
+      - code: authors-from-members
+        type: 3
+        label: "Authors from plan members"
+        group: "DSpace record"
+        description: "Which plan members are credited as authors."
+        defaultValue: "all"
+        options:
+          - label: "Every member"
+            value: "all"
+          - label: "Owners and editors"
+            value: "contributors"
+          - label: "Owners only"
+            value: "owners"
+          - label: "None (only what the blueprint maps)"
+            value: "none"
+      - code: publisher
+        type: 0
+        label: "Publisher"
+        group: "DSpace record"
+        description: "The publisher (dc.publisher) of records whose plan sets none. The collection's submission form must include the field."
+      - code: rights
+        type: 0
+        label: "Rights"
+        group: "DSpace record"
+        description: "The rights statement (dc.rights) of records whose plan sets none. The collection's submission form must include the field."
+      - code: rights-uri
+        type: 0
+        label: "Rights URI"
+        group: "DSpace record"
+        description: "The licence or rights URI (dc.rights.uri) of records whose plan sets none. The collection's submission form must include the field."
+      - code: deposit-files
+        type: 7
+        label: "Files to deposit"
+        group: "Files"
+        description: "Which files are uploaded with the record. Empty: all of them."
+        options:
+          - label: "Plan document"
+            value: "PlanDocument"
+          - label: "Machine-actionable plan (RDA JSON)"
+            value: "RdaJson"
+          - label: "Supporting files"
+            value: "SupportingFiles"
     user-configuration-fields:
       - code: dspace-email
         type: 0
