@@ -151,6 +151,25 @@ dspace:
             value: "RdaJson"
           - label: "Supporting files"
             value: "SupportingFiles"
+      - code: review-hidden-sections
+        type: 0
+        label: "Hidden sections"
+        group: "Review"
+        description: "Comma-separated submission form sections or metadata fields users never see in the review, e.g. \"traditionalpagetwo, dc.subject\". Values your plans map into them are still published."
+      - code: review-locked
+        type: 7
+        label: "Values users can't change"
+        group: "Review"
+        description: "These settings show in the review as set by the organisation, and users' edits to them are ignored."
+        options:
+          - label: "Item type"
+            value: "item-type"
+          - label: "Publisher"
+            value: "publisher"
+          - label: "Rights"
+            value: "rights"
+          - label: "Rights URI"
+            value: "rights-uri"
     user-configuration-fields:
       - code: dspace-email
         type: 0

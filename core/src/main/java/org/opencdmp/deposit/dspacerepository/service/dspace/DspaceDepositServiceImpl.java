@@ -14,7 +14,9 @@ import org.opencdmp.deposit.dspacerepository.configuration.semantics.SemanticsPr
 import org.opencdmp.deposit.dspacerepository.model.*;
 import org.opencdmp.deposit.dspacerepository.model.builder.DspaceBuilder;
 import org.opencdmp.deposit.dspacerepository.model.builder.DspacePreviewMapper;
+import org.opencdmp.deposit.dspacerepository.model.form.DspaceSubmissionForm;
 import org.opencdmp.deposit.dspacerepository.service.storage.FileStorageService;
+import org.opencdmp.depositbase.repository.DepositAccount;
 import org.opencdmp.depositbase.repository.DepositConfiguration;
 import org.opencdmp.depositbase.repository.DepositPluginSettings;
 import org.opencdmp.depositbase.repository.DepositPreviewMergeHelper;
@@ -38,6 +40,8 @@ import reactor.core.publisher.Mono;
 
 import java.io.*;
 import java.util.*;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 
 import reactor.netty.http.client.HttpClient;
@@ -65,18 +69,20 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
     private final FileStorageService storageService;
     private final ResourceLoader resourceLoader;
     private final DspacePreviewMapper dspacePreviewMapper;
+    private final DspaceSubmissionFormService submissionFormService;
 
     private byte[] logo;
     private String csrfToken;
     private String submitterId;
     
     @Autowired
-    public DspaceDepositServiceImpl(DspaceServiceProperties dspaceServiceProperties, DspaceBuilder mapper, FileStorageService storageService, ResourceLoader resourceLoader, SemanticsProperties semanticsProperties, DspacePreviewMapper dspacePreviewMapper){
+    public DspaceDepositServiceImpl(DspaceServiceProperties dspaceServiceProperties, DspaceBuilder mapper, FileStorageService storageService, ResourceLoader resourceLoader, SemanticsProperties semanticsProperties, DspacePreviewMapper dspacePreviewMapper, DspaceSubmissionFormService submissionFormService){
         this.dspaceServiceProperties = dspaceServiceProperties;
         this.dspaceBuilder = mapper;
 	    this.storageService = storageService;
         this.resourceLoader = resourceLoader;
         this.dspacePreviewMapper = dspacePreviewMapper;
+        this.submissionFormService = submissionFormService;
         this.logo = null;
         this.dspaceServiceProperties.getDepositConfiguration().setSemantics(DspaceSemanticsManifest.build(semanticsProperties, dspaceServiceProperties));
     }
@@ -88,26 +94,8 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
 
         if(depositConfiguration != null && planDepositModel != null && planDepositModel.getPlanModel() != null) {
 
-            this.setCsrfToken();
-            String token = null;
-            if (planDepositModel.getAuthInfo() != null) {
-                if (planDepositModel.getAuthInfo().getAuthFields() != null && !planDepositModel.getAuthInfo().getAuthFields().isEmpty() && depositConfiguration.getUserConfigurationFields() != null) {
-                    PluginUserFieldModel emailFieldModel = planDepositModel.getAuthInfo().getAuthFields().stream().filter(x -> x.getCode().equals(CONFIGURATION_FIELD_EMAIL)).findFirst().orElse(null);
-                    PluginUserFieldModel passwordFieldModel = planDepositModel.getAuthInfo().getAuthFields().stream().filter(x -> x.getCode().equals(CONFIGURATION_FIELD_PASSWORD)).findFirst().orElse(null);
-                    if (emailFieldModel != null && emailFieldModel.getTextValue() != null && !emailFieldModel.getTextValue().isBlank()
-                        && passwordFieldModel != null && passwordFieldModel.getTextValue() != null && !passwordFieldModel.getTextValue().isBlank()) {
-                        token = this.setBearerToken(emailFieldModel.getTextValue(), passwordFieldModel.getTextValue());
-                    }
-                }
-            }
-
             DepositPluginSettings settings = DepositPluginSettings.of(planDepositModel.getPlanModel(), depositConfiguration);
-            if (token == null || token.isBlank()) {
-                String organisationUsername = settings.text(SETTING_ORGANISATION_USERNAME);
-                String organisationPassword = settings.text(SETTING_ORGANISATION_PASSWORD);
-                if (organisationUsername != null && organisationPassword != null) token = this.setBearerToken(organisationUsername, organisationPassword);
-                else token = this.setBearerToken(this.dspaceServiceProperties.getUsername(), this.dspaceServiceProperties.getPassword());
-            }
+            String token = this.login(planDepositModel, settings);
             String collection = settings.text(SETTING_COLLECTION, this.dspaceServiceProperties.getCollection());
             String submissionMode = settings.text(SETTING_SUBMISSION_MODE);
 
@@ -129,7 +117,7 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
                 if (previousDOI == null) {
                     return deposit(token, baseUrl, client, planDepositModel, collection, submissionMode);
                 } else {
-                    return depositNewVersion(token, baseUrl, client, planDepositModel, submissionMode);
+                    return depositNewVersion(token, baseUrl, client, planDepositModel, collection, submissionMode);
                 }
 
             } catch (HttpClientErrorException | HttpServerErrorException ex) {
@@ -153,21 +141,116 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
         if (planDepositModel == null || planDepositModel.getPlanModel() == null) return null;
         //  List<String> acceptedTypeCodes = this.dspaceServiceProperties.getAcceptedTypeCodes(); // this might be useful later
         PlanModel planModel = planDepositModel.getPlanModel();
-        List<PatchEntity> entities = dspaceBuilder.build(planDepositModel.getPlanModel());
+        DepositPluginSettings settings = DepositPluginSettings.of(planModel, this.getConfiguration());
+
+        // DSpace is logged in to only when the form of the collection is not cached
+        String[] token = new String[1];
+        Supplier<String> login = () -> token[0] != null ? token[0] : (token[0] = this.login(planDepositModel, settings));
+        String collection = settings.text(SETTING_COLLECTION, this.dspaceServiceProperties.getCollection());
+        if (planModel.getPreviousDOI() != null) collection = this.getOwningCollection(planModel.getPreviousDOI(), login, collection);
+        DspaceSubmissionForm form = this.submissionFormService.getForm(collection, login);
+
+        List<PatchEntity> entities = this.dspacePreviewMapper.alignToForm(dspaceBuilder.build(planModel), form);
         List<String> uploadFileNames = new ArrayList<>();
 
         if (planModel.getPdfFile() != null && planModel.getPdfFile().getFilename() != null) uploadFileNames.add(planModel.getPdfFile().getFilename());
         if (planModel.getRdaJsonFile() != null && planModel.getRdaJsonFile().getFilename() != null) uploadFileNames.add(planModel.getRdaJsonFile().getFilename());
         if (planModel.getSupportingFilesZip() != null && planModel.getSupportingFilesZip().getFilename() != null) uploadFileNames.add(planModel.getSupportingFilesZip().getFilename());
 
-        DepositPreviewModel preview = this.dspacePreviewMapper.toPreview(entities, uploadFileNames);
+        DepositPreviewModel preview = this.dspacePreviewMapper.toPreview(entities, form, uploadFileNames, settings);
         DepositPreviewMergeHelper.merge(preview, planDepositModel.getStoredFields(), planDepositModel.getStoredGroups());
         return preview;
     }
 
     @Override
     public List<PreviewFieldOption> searchVocabulary(String fieldCode, String like) {
-        return this.dspacePreviewMapper.searchVocabulary(fieldCode, like);
+        // the review's dropdowns carry their whole vocabulary, so no field searches
+        return List.of();
+    }
+
+    /** Logs in with the user's own DSpace account if they gave one, else the organisation's, else the installation's. */
+    private String login(PlanDepositModel planDepositModel, DepositPluginSettings settings) {
+        DepositConfiguration depositConfiguration = this.getConfiguration();
+        this.setCsrfToken();
+        String token = null;
+        if (planDepositModel.getAuthInfo() != null) {
+            if (planDepositModel.getAuthInfo().getAuthFields() != null && !planDepositModel.getAuthInfo().getAuthFields().isEmpty() && depositConfiguration.getUserConfigurationFields() != null) {
+                PluginUserFieldModel emailFieldModel = planDepositModel.getAuthInfo().getAuthFields().stream().filter(x -> x.getCode().equals(CONFIGURATION_FIELD_EMAIL)).findFirst().orElse(null);
+                PluginUserFieldModel passwordFieldModel = planDepositModel.getAuthInfo().getAuthFields().stream().filter(x -> x.getCode().equals(CONFIGURATION_FIELD_PASSWORD)).findFirst().orElse(null);
+                if (emailFieldModel != null && emailFieldModel.getTextValue() != null && !emailFieldModel.getTextValue().isBlank()
+                    && passwordFieldModel != null && passwordFieldModel.getTextValue() != null && !passwordFieldModel.getTextValue().isBlank()) {
+                    token = this.setBearerToken(emailFieldModel.getTextValue(), passwordFieldModel.getTextValue());
+                }
+            }
+        }
+
+        if (token == null || token.isBlank()) {
+            String organisationUsername = settings.text(SETTING_ORGANISATION_USERNAME);
+            String organisationPassword = settings.text(SETTING_ORGANISATION_PASSWORD);
+            if (organisationUsername != null && organisationPassword != null) token = this.setBearerToken(organisationUsername, organisationPassword);
+            else token = this.setBearerToken(this.dspaceServiceProperties.getUsername(), this.dspaceServiceProperties.getPassword());
+        }
+        return token;
+    }
+
+    @Override
+    public DepositAccount account(PlanDepositModel planDepositModel) {
+        DepositConfiguration depositConfiguration = this.getConfiguration();
+        if (depositConfiguration == null || planDepositModel == null || planDepositModel.getPlanModel() == null) return null;
+
+        try {
+            String token = this.login(planDepositModel, DepositPluginSettings.of(planDepositModel.getPlanModel(), depositConfiguration));
+            if (token == null || token.isBlank()) return null;
+
+            // the token goes in the header, not the URL, because the request logger prints URLs
+            HttpEntity<Void> entity = new HttpEntity<>(this.createHeaders(token, false, false, false));
+            Map<String, Object> status = new RestTemplate().exchange(depositConfiguration.getRepositoryUrl() + "authn/status?embed=eperson", HttpMethod.GET, entity, new ParameterizedTypeReference<Map<String, Object>>() {}).getBody();
+            if (status == null || !Boolean.TRUE.equals(status.get("authenticated"))) return null;
+
+            Object eperson = status.get("_embedded") instanceof Map<?, ?> embedded ? embedded.get("eperson") : null;
+            if (!(eperson instanceof Map<?, ?>) && status.get("_links") instanceof Map<?, ?> links && links.get("eperson") instanceof Map<?, ?> link && link.get("href") instanceof String href) {
+                eperson = new RestTemplate().exchange(href, HttpMethod.GET, entity, new ParameterizedTypeReference<Map<String, Object>>() {}).getBody();
+            }
+            if (!(eperson instanceof Map<?, ?> person)) return null;
+
+            Object id = person.get("id") != null ? person.get("id") : person.get("uuid");
+            if (id == null) return null;
+
+            String fullName = String.join(" ", Stream.of(this.metadataValue(person, "eperson.firstname"), this.metadataValue(person, "eperson.lastname")).filter(Objects::nonNull).toList());
+            String netid = person.get("netid") instanceof String value && !value.isBlank() ? value : null;
+            String email = person.get("email") instanceof String value && !value.isBlank() ? value : null;
+            String name = !fullName.isBlank() ? fullName : netid != null ? netid : email;
+            if (name != null && email != null && !name.equals(email)) name = name + " (" + email + ")";
+
+            DepositAccount account = new DepositAccount();
+            account.setId(id.toString());
+            account.setName(name);
+            return account;
+        } catch (Exception ex) {
+            logger.error("could not read the DSpace account of the deposit", ex);
+            return null;
+        }
+    }
+
+    private String metadataValue(Map<?, ?> eperson, String key) {
+        if (!(eperson.get("metadata") instanceof Map<?, ?> metadata) || !(metadata.get(key) instanceof List<?> values) || values.isEmpty()) return null;
+        return values.getFirst() instanceof Map<?, ?> first && first.get("value") instanceof String value && !value.isBlank() ? value.trim() : null;
+    }
+
+    /** The collection a new version is submitted to: the previous version's own, else the given one. */
+    private String getOwningCollection(String previousDOI, Supplier<String> token, String fallback) {
+        try {
+            String itemId = this.getItemIdFromHandle(this.getConfiguration().getRepositoryUrl(), previousDOI);
+            if (itemId == null) return fallback;
+            Object response = new RestTemplate().exchange(this.getConfiguration().getRepositoryUrl() + "core/items/" + itemId + "/owningCollection",
+                    HttpMethod.GET, new HttpEntity<>(this.createHeaders(token.get(), false, false, false)), Object.class).getBody();
+            Map<String, Object> respMap = objectMapper.convertValue(response, Map.class);
+            Object id = respMap != null ? respMap.get("id") : null;
+            return id != null ? id.toString() : fallback;
+        } catch (Exception ex) {
+            logger.warn(new MapLogEntry("Could not read the collection of the previous version").And("previousDOI", previousDOI).And("error", ex.getMessage()));
+            return fallback;
+        }
     }
 
     private void setCsrfToken(){
@@ -216,10 +299,11 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
         return headers;
     }
 
-    private String depositNewVersion(String token, String baseUrl, WebClient client, PlanDepositModel planDepositModel, String submissionMode) {
+    private String depositNewVersion(String token, String baseUrl, WebClient client, PlanDepositModel planDepositModel, String collection, String submissionMode) {
 
-
-        String itemId = this.getItemIdFromHandle(baseUrl, planDepositModel.getPlanModel().getPreviousDOI());
+        String previousDOI = planDepositModel.getPlanModel().getPreviousDOI();
+        String itemId = this.getItemIdFromHandle(baseUrl, previousDOI);
+        DspaceSubmissionForm form = this.submissionFormService.getForm(this.getOwningCollection(previousDOI, () -> token, collection), () -> token);
 
         String workSpaceItemId = this.createNewVersion(itemId, token, client);
 
@@ -227,7 +311,7 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
 
         String workSpaceItemUrl = baseUrl + "submission/workspaceitems/" + workSpaceItemId;
 
-        this.sendDataFields(token, workSpaceItemUrl, client, planDepositModel,false);
+        this.sendDataFields(token, workSpaceItemUrl, client, planDepositModel, form, false);
 
         this.uploadFiles(planDepositModel.getPlanModel(), workSpaceItemUrl, token);
 
@@ -237,18 +321,23 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
     private String submit(String token, String baseUrl, WebClient client, PlanDepositModel planDepositModel, String workSpaceItemUrl, String submissionMode) {
         if (SUBMISSION_MODE_WORKSPACE.equals(submissionMode)) return this.getIdentifier(this.getItemId(workSpaceItemUrl, token), token);
 
+        // Read before submitting: a collection without workflow steps archives the item and removes the workspace item.
+        String itemId = this.getItemId(workSpaceItemUrl, token);
+
         String workFlowId = this.createWorkflow(workSpaceItemUrl, token);
 
-        String itemId = this.getItemId(baseUrl + "workflow/workflowitems/" + workFlowId, token);
+        if (workFlowId != null) {
+            if (SUBMISSION_MODE_WORKFLOW.equals(submissionMode)) return this.getIdentifier(itemId, token);
 
-        if (SUBMISSION_MODE_WORKFLOW.equals(submissionMode)) return this.getIdentifier(itemId, token);
+            String claimedTaskId = this.createClaimedTask(workFlowId, token);
 
-        String claimedTaskId = this.createClaimedTask(workFlowId, token);
-
-        this.submitTask(claimedTaskId, token);
+            this.submitTask(claimedTaskId, token);
+        } else {
+            logger.info(new MapLogEntry("The collection has no workflow steps, so DSpace archived the submission directly").And("itemId", itemId).And("submissionMode", submissionMode));
+        }
 
         String accessUrl = baseUrl + "core/items/" + itemId;
-        this.sendDataFields(token, accessUrl, client, planDepositModel, true);
+        this.sendDataFields(token, accessUrl, client, planDepositModel, null, true);
 
         if(planDepositModel.getPlanModel().getAccessType().equals(PlanAccessType.Restricted)) this.sendPatchBooleanRequest(client, accessUrl, this.dspaceBuilder.buildBooleanValue(false, "replace","/discoverable"), token);
 
@@ -409,25 +498,24 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
 
         url = baseUrl + "submission/workspaceitems/" + id;
 
-        this.sendDataFields(token, url, client, planDepositModel, false);
+        this.sendDataFields(token, url, client, planDepositModel, this.submissionFormService.getForm(collection, () -> token), false);
 
         this.uploadFiles(planDepositModel.getPlanModel(), url, token);
 
         return this.submit(token, baseUrl, client, planDepositModel, url, submissionMode);
     }
 
-    private void sendDataFields(String token, String url, WebClient client, PlanDepositModel planDepositModel, boolean isPublished){
+    private void sendDataFields(String token, String url, WebClient client, PlanDepositModel planDepositModel, DspaceSubmissionForm form, boolean isPublished){
         if(!isPublished){
-            List<PatchEntity> entities = dspaceBuilder.build(planDepositModel.getPlanModel());
-            this.dspacePreviewMapper.applyOverrides(entities,planDepositModel.getEditedFields(), planDepositModel.getEditedGroups());
+            List<PatchEntity> entities = this.dspacePreviewMapper.alignToForm(dspaceBuilder.build(planDepositModel.getPlanModel()), form);
+            DepositPluginSettings settings = DepositPluginSettings.of(planDepositModel.getPlanModel(), this.getConfiguration());
+            this.dspacePreviewMapper.applyOverrides(entities, form, planDepositModel.getEditedFields(), planDepositModel.getEditedGroups(), settings);
             this.sendPatchRequest(client, url, entities, token);
             this.sendPatchBooleanRequest(client, url, this.dspaceBuilder.buildBooleanValue(true, DSPACE_OP_ADD, "/sections/license/granted"), token);
-
-
         }else{
+            // the review edits went into the workspace item; this patch only adds the archive's /metadata values
             List<PatchEntity> entities = dspaceBuilder.applySemantics(planDepositModel.getPlanModel(),true);
-            this.dspacePreviewMapper.applyOverrides(entities,planDepositModel.getEditedFields(), planDepositModel.getEditedGroups());
-            this.sendPatchRequest(client, url, entities, token);
+            if (!entities.isEmpty()) this.sendPatchRequest(client, url, entities, token);
         }
 
 
@@ -487,15 +575,17 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
         restTemplate.postForEntity(url, requestEntity, Object.class);
     }
 
+    /** The workflow item id, or null when the collection has no workflow steps: DSpace then archives the item and answers 204. */
     private String createWorkflow(String workSpaceItemUrl, String token){
         RestTemplate restTemplate = new RestTemplate();
 
         HttpHeaders headers = this.createHeaders(token, false, false,true);
 
         Object response = restTemplate.postForEntity(this.dspaceServiceProperties.getDepositConfiguration().getRepositoryUrl() + "workflow/workflowitems", new HttpEntity<>(workSpaceItemUrl, headers), Object.class).getBody();
+        if (response == null) return null;
         Map<String, Object> respMap = objectMapper.convertValue(response, Map.class);
 
-        return String.valueOf(respMap.get("id"));
+        return respMap.get("id") != null ? String.valueOf(respMap.get("id")) : null;
     }
 
     private String getItemId(String submissionItemUrl, String token){

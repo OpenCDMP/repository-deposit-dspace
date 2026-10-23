@@ -7,6 +7,7 @@ import org.opencdmp.commonmodels.models.deposit.DepositPreviewModel;
 import org.opencdmp.commonmodels.models.plan.PlanModel;
 import org.opencdmp.deposit.dspacerepository.audit.AuditableAction;
 import org.opencdmp.deposit.dspacerepository.model.builder.DspacePreviewMapper;
+import org.opencdmp.depositbase.repository.DepositAccount;
 import org.opencdmp.depositbase.repository.DepositConfiguration;
 import org.opencdmp.deposit.dspacerepository.service.dspace.DspaceDepositService;
 import org.opencdmp.depositbase.repository.PlanDepositModel;
@@ -33,12 +34,12 @@ public class DepositController implements org.opencdmp.depositbase.repository.De
 
     public DepositPreviewModel preview(@RequestBody PlanDepositModel planDepositModel)
     {
-        logger.debug(new MapLogEntry("Preview " + PlanModel.class.getSimpleName()).And("planDepositModel", planDepositModel));
+        logger.debug(new MapLogEntry("Preview " + PlanModel.class.getSimpleName()).And("planId", planDepositModel.getPlanModel() != null ? planDepositModel.getPlanModel().getId() : null));
 
         DepositPreviewModel previewModel = depositClient.preview(planDepositModel);
 
         this.auditService.track(AuditableAction.Deposit_Preview, Map.ofEntries(
-                new AbstractMap.SimpleEntry<String, Object>("planDepositModel", planDepositModel)
+                new AbstractMap.SimpleEntry<String, Object>("planId", planDepositModel.getPlanModel() != null ? planDepositModel.getPlanModel().getId() : null)
         ));
         return previewModel;
     }
@@ -52,6 +53,15 @@ public class DepositController implements org.opencdmp.depositbase.repository.De
                 new AbstractMap.SimpleEntry<String, Object>("planId", planDepositModel.getPlanModel() != null ? planDepositModel.getPlanModel().getId() : null)
         ));
         return doiId;
+    }
+
+    public DepositAccount account(@RequestBody PlanDepositModel planDepositModel) {
+        logger.debug(new MapLogEntry("account"));
+
+        DepositAccount account = depositClient.account(planDepositModel);
+
+        this.auditService.track(AuditableAction.Deposit_Account);
+        return account;
     }
 
     public String authenticate(@RequestParam("authToken") String code) {

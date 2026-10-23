@@ -73,6 +73,10 @@ For each deposit, the service signs in to DSpace with the first of these that is
 
 OpenCDMP decides which accounts a user may publish under, and never falls back to the organisation's or the installation's account when a user chose their own. See [Publishing accounts and files](https://opencdmp.github.io/optional-services/deposit-services/#publishing-accounts-and-files).
 
+### The account a deposit used
+
+A new version of an item is created by the account that signs in, and DSpace refuses it unless that account may version the item, which depends on the repository's authorisation and versioning settings. After a deposit under a user's own account, OpenCDMP calls `POST /api/deposit/account` with the same credentials. The service signs in as for a deposit and reads the account from `GET <DEPOSIT_DSPACE_URL>authn/status?embed=eperson`. It returns the EPerson's UUID and a name to show: the first and last name, otherwise the NetID, otherwise the email, with the email added when it differs. OpenCDMP keeps them with the plan's Handle and names that account when a later version is published. It never asks for the organisation's account, so that account's DSpace identity is not stored or shown to users.
+
 ## Register with OpenCDMP
 
 Register the service for the whole installation in the configuration of the API service, or for one organisation under **Settings > Plugins > Add plugin**. Use the plugin id `dspace`, and register a PDF and an RDA JSON transformer with it. See [Registering plugin services](https://opencdmp.github.io/deployment/configuration/plugin-services/) and [Organisation plugins](https://opencdmp.github.io/administering/tenant-management/plugins/).
@@ -85,6 +89,7 @@ All endpoints are under `/api/deposit`. They accept only a Bearer token from the
 | --- | --- |
 | `POST /api/deposit` | Deposit a plan and return the item's Handle |
 | `POST /api/deposit/preview` | Return the metadata that would be deposited, as an editable form |
+| `POST /api/deposit/account` | Return the DSpace account that a deposit's credentials belong to (see [The account a deposit used](#the-account-a-deposit-used)) |
 | `GET /api/deposit/configuration` | Return the service's `DepositConfiguration` |
 | `GET /api/deposit/logo` | Return the DSpace logo, Base64-encoded |
 

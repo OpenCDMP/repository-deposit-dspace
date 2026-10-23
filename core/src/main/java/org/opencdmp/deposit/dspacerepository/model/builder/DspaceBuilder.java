@@ -38,16 +38,16 @@ public class DspaceBuilder {
     private final  SemanticsProperties semanticsProperties;
     private static final String DSPACE_OP_ADD = "add";
 
-    private static final String SEMANTIC_PROVENANCE = "provenance";
-    private static final String SEMANTIC_IDENTIFIER = "identifier";
-    private static final String SEMANTIC_TITLE_ALTERNATIVE = "title.alternative";
-    private static final String SEMANTIC_AUTHOR = "author";
+    public static final String SEMANTIC_PROVENANCE = "provenance";
+    public static final String SEMANTIC_IDENTIFIER = "identifier";
+    public static final String SEMANTIC_TITLE_ALTERNATIVE = "title.alternative";
+    public static final String SEMANTIC_AUTHOR = "author";
     private static final String SEMANTIC_AUTHOR_PATH = "/sections/publicationStep/dc.contributor.author";
-    private static final String SEMANTIC_TYPE = "type";
+    public static final String SEMANTIC_TYPE = "type";
     private static final String SEMANTIC_TYPE_PATH = "/sections/publicationStep/dc.type";
     private static final String SEMANTIC_OTHER = "other";
-    private static final String SEMANTIC_DATE_ACCESSIONED = "date.accessioned";
-    private static final String SEMANTIC_DATE_AVAILABLE = "date.available";
+    public static final String SEMANTIC_DATE_ACCESSIONED = "date.accessioned";
+    public static final String SEMANTIC_DATE_AVAILABLE = "date.available";
     private static final String SEMANTIC_LANGUAGE_PATH = "/sections/publicationStep/dc.language.iso";
     private static final String SEMANTIC_PUBLISHER_PATH = "/sections/publicationStep/dc.publisher";
     private static final String SEMANTIC_RIGHTS_PATH = "/sections/publicationStep/dc.rights";
@@ -57,6 +57,13 @@ public class DspaceBuilder {
     private static final String SETTING_RIGHTS = "rights";
     private static final String SETTING_RIGHTS_URI = "rights-uri";
     private static final String PUBLIC_PAGE_PATH = "/sections/publicationStep/dc.identifier.uri";
+    private static final String TITLE_PATH = "/sections/publicationStep/dc.title";
+    private static final String DATE_ISSUED_PATH = "/sections/publicationStep/dc.date.issued";
+    private static final String ABSTRACT_PATH = "/sections/traditionalpagetwo/dc.description.abstract";
+
+    /** The submission paths the builder writes whatever the semantics configuration says. */
+    public static final List<String> FIXED_PATHS = List.of(TITLE_PATH, DATE_ISSUED_PATH, SEMANTIC_AUTHOR_PATH, SEMANTIC_TYPE_PATH, SEMANTIC_LANGUAGE_PATH,
+            SEMANTIC_PUBLISHER_PATH, PUBLIC_PAGE_PATH, SEMANTIC_RIGHTS_PATH, SEMANTIC_RIGHTS_URI_PATH, ABSTRACT_PATH);
 
 
     @Autowired
@@ -69,11 +76,11 @@ public class DspaceBuilder {
 
         List<PatchEntity> entities = new ArrayList<>();
 
-        entities.addAll(this.buildSingleValue(planModel.getLabel(), DSPACE_OP_ADD, "/sections/publicationStep/dc.title"));
+        entities.addAll(this.buildSingleValue(planModel.getLabel(), DSPACE_OP_ADD, TITLE_PATH));
 
         DateFormat df = new SimpleDateFormat("yyyy-MM-dd");
-        entities.addAll(this.buildSingleValue(df.format(new Date()),DSPACE_OP_ADD, "/sections/publicationStep/dc.date.issued"));
-        entities.addAll(this.buildDescription(planModel.getDescription(), DSPACE_OP_ADD, "/sections/traditionalpagetwo/dc.description.abstract"));
+        entities.addAll(this.buildSingleValue(df.format(new Date()),DSPACE_OP_ADD, DATE_ISSUED_PATH));
+        entities.addAll(this.buildDescription(planModel.getDescription(), DSPACE_OP_ADD, ABSTRACT_PATH));
         List<PatchEntity> semantics = this.applySemantics(planModel,false);
         if(planModel.getAccessType().equals(PlanAccessType.Public)) {
             PatchEntity publicPage = this.buildIsIdenticalTo(planModel, DSPACE_OP_ADD, PUBLIC_PAGE_PATH).get(0);
@@ -309,7 +316,7 @@ public class DspaceBuilder {
     }
 
     private Set<String> extractSchematicValues(List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fields, Map<String, PropertyDefinitionFieldSetModel> fieldSets) {
-        Set<String> values = new HashSet<>();
+        Set<String> values = new LinkedHashSet<>();
         for (org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field : fields) {
             if (field.getData() == null) continue;
             List<FieldModel> valueFields = this.findValueFieldsByIds(field.getId(), fieldSets);
@@ -398,7 +405,7 @@ public class DspaceBuilder {
         List<PatchEntity> entityList = new ArrayList<>();
         List<SemanticsProperties.PathName> acceptedSemantics = this.semanticsProperties.getAvailable() != null ? this.semanticsProperties.getAvailable() : List.of();
 
-        Map<String, Set<String>> pathToValuesMap = new HashMap<>();
+        Map<String, Set<String>> pathToValuesMap = new LinkedHashMap<>();
         DepositPluginSettings settings = DepositPluginSettings.of(planModel, this.dspaceServiceProperties.getDepositConfiguration());
         String defaultType = settings.text(SETTING_ITEM_TYPE, this.dspaceServiceProperties.getDefaultType());
         List<PlanUserModel> authors = settings.authors(planModel.getUsers());
@@ -408,7 +415,7 @@ public class DspaceBuilder {
                 for (SemanticsProperties.PathName relatedName : acceptedSemantics) {
                     List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fieldsWithSemantics = this.findSchematicValues(relatedName.getName(), descriptionModel.getDescriptionTemplate().getDefinition().getAllField());
                     Set<String> values = extractSchematicValues(fieldsWithSemantics, descriptionModel.getProperties().getFieldSets());
-                    if (!values.isEmpty()) pathToValuesMap.computeIfAbsent(relatedName.getPath(), k -> new HashSet<>()).addAll(values);
+                    if (!values.isEmpty()) pathToValuesMap.computeIfAbsent(relatedName.getPath(), k -> new LinkedHashSet<>()).addAll(values);
                 }
             }
         }
@@ -416,7 +423,7 @@ public class DspaceBuilder {
         for (SemanticsProperties.PathName relatedName : acceptedSemantics) {
             List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fieldsWithSemantics = this.findSchematicValues(relatedName.getName(), planModel.getPlanBlueprint().getDefinition().getAllField());
             Set<String> values = extractSchematicValues(fieldsWithSemantics, planModel.getProperties().getFieldSets());
-            if (!values.isEmpty()) pathToValuesMap.computeIfAbsent(relatedName.getPath(), k -> new HashSet<>()).addAll(values);
+            if (!values.isEmpty()) pathToValuesMap.computeIfAbsent(relatedName.getPath(), k -> new LinkedHashSet<>()).addAll(values);
         }
 
         for (Map.Entry<String, Set<String>> entry : pathToValuesMap.entrySet()) {
@@ -433,7 +440,7 @@ public class DspaceBuilder {
 
                     Set<String> validatedValues = values.stream()
                             .map(v -> allowedTypes.stream().filter(v::equalsIgnoreCase).findFirst().orElse(otherType))
-                            .collect(Collectors.toSet());
+                            .collect(Collectors.toCollection(LinkedHashSet::new));
 
                     entityList.addAll(this.buildTypeListSemantic(defaultType, validatedValues, DSPACE_OP_ADD, path));
                 } else if (path.contains(SEMANTIC_AUTHOR)) {

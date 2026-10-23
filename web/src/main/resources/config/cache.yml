@@ -10,9 +10,16 @@ cache:
         expireAfterWriteMinutes: 10
         expireAfterAccessMinutes: 10
         refreshAfterWriteMinutes: 10
+      - names: [ "dspaceSubmissionForm" ]
+        allowNullValues: true
+        initialCapacity: 10
+        maximumSize: 50
+        enableRecordStats: false
+        expireAfterWriteMinutes: 10
     mapCaches:
   logoByRepository:
     name: logoByRepository
     keyPattern: dspaceplugin_$repo$:v0
-    
-    
+  dspace-submission-form:
+    name: dspaceSubmissionForm
+    keyPattern: dspace_submission_form_$repositoryUrl$_$collection$:v0
