@@ -1,5 +1,7 @@
 package org.opencdmp.deposit.dspacerepository.service.dspace;
 
+import gr.cite.tools.exception.MyApplicationException;
+import gr.cite.tools.exception.MyValidationException;
 import gr.cite.tools.logging.LoggerService;
 import gr.cite.tools.logging.MapLogEntry;
 import org.json.JSONObject;
@@ -32,9 +34,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
@@ -94,25 +97,25 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
 
         if(depositConfiguration != null && planDepositModel != null && planDepositModel.getPlanModel() != null) {
 
-            DepositPluginSettings settings = DepositPluginSettings.of(planDepositModel.getPlanModel(), depositConfiguration);
-            String token = this.login(planDepositModel, settings);
-            String collection = settings.text(SETTING_COLLECTION, this.dspaceServiceProperties.getCollection());
-            String submissionMode = settings.text(SETTING_SUBMISSION_MODE);
-
-            String baseUrl = depositConfiguration.getRepositoryUrl();
-
-            //get sumbitter
-            this.setSubmitterId(token);
-
-            // First step, post call to Zenodo, to create the entry.
-            WebClient client = this.getWebClient();
-
-            DepositConfiguration config = this.dspaceServiceProperties.getDepositConfiguration();
-            if (config == null) return null;
-
-            String previousDOI = planDepositModel.getPlanModel().getPreviousDOI();
-
             try {
+
+                DepositPluginSettings settings = DepositPluginSettings.of(planDepositModel.getPlanModel(), depositConfiguration);
+                String token = this.login(planDepositModel, settings);
+                String collection = settings.text(SETTING_COLLECTION, this.dspaceServiceProperties.getCollection());
+                String submissionMode = settings.text(SETTING_SUBMISSION_MODE);
+
+                String baseUrl = depositConfiguration.getRepositoryUrl();
+
+                //get sumbitter
+                this.setSubmitterId(token);
+
+                // First step, post call to Zenodo, to create the entry.
+                WebClient client = this.getWebClient();
+
+                DepositConfiguration config = this.dspaceServiceProperties.getDepositConfiguration();
+                if (config == null) return null;
+
+                String previousDOI = planDepositModel.getPlanModel().getPreviousDOI();
 
                 if (previousDOI == null) {
                     return deposit(token, baseUrl, client, planDepositModel, collection, submissionMode);
@@ -120,14 +123,10 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
                     return depositNewVersion(token, baseUrl, client, planDepositModel, collection, submissionMode);
                 }
 
-            } catch (HttpClientErrorException | HttpServerErrorException ex) {
-                logger.error(ex.getMessage(), ex);
-                Map<String, String> parsedException = objectMapper.readValue(ex.getResponseBodyAsString(), Map.class);
-                try {
-                    throw new IOException(parsedException.get("message"), ex);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
+            } catch (WebClientResponseException ex) {
+                throw this.toException(ex, ex.getStatusCode(), ex.getResponseBodyAsString(), ex.getStatusText());
+            } catch (HttpStatusCodeException ex) {
+                throw this.toException(ex, ex.getStatusCode(), ex.getResponseBodyAsString(), ex.getStatusText());
             }
 
         }
@@ -169,6 +168,23 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
     }
 
     /** Logs in with the user's own DSpace account if they gave one, else the organisation's, else the installation's. */
+    /** What DSpace answered, as the user should see it; its errors are JSON with a "message". */
+    private RuntimeException toException(Exception ex, HttpStatusCode status, String body, String statusText) {
+        logger.error(ex.getMessage(), ex);
+        if (status.value() == HttpStatus.UNAUTHORIZED.value()) return new MyValidationException("The repository did not accept the account's email and password.");
+        if (status.value() == HttpStatus.FORBIDDEN.value()) return new MyValidationException("The account is not allowed to add records to the repository.");
+        String message = null;
+        try {
+            message = objectMapper.readTree(body).path("message").asString(null);
+        } catch (Exception ignored) {
+            // not a JSON answer
+        }
+        if (message == null || message.isBlank()) message = statusText;
+        if (status.is4xxClientError()) return new MyValidationException("The repository refused the deposit: " + message);
+        // OpenCDMP shows the user the reason only of a refused (4xx) deposit, so DSpace's own failures are reported the same way
+        return new MyValidationException("The repository could not take the deposit: " + message);
+    }
+
     private String login(PlanDepositModel planDepositModel, DepositPluginSettings settings) {
         DepositConfiguration depositConfiguration = this.getConfiguration();
         this.setCsrfToken();
@@ -373,7 +389,43 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
 
     }
 
+    // DSpace answers a version request for these items with a generic 500, so check them first.
+    private void checkCanCreateNewVersion(String itemId, String token) {
+        RestTemplate restTemplate = new RestTemplate();
+        HttpEntity<Void> entity = new HttpEntity<>(this.createHeaders(token, false, false, false));
+        String itemUrl = this.dspaceServiceProperties.getDepositConfiguration().getRepositoryUrl() + "core/items/" + itemId;
+
+        Map<String, Object> item;
+        try {
+            item = objectMapper.convertValue(restTemplate.exchange(itemUrl, HttpMethod.GET, entity, Object.class).getBody(), Map.class);
+        } catch (HttpClientErrorException.NotFound ex) {
+            item = null;
+        }
+        if (item == null) throw new MyValidationException("The previous version of the record (DSpace item " + itemId + ") no longer exists in DSpace, so a new version cannot be created.");
+
+        if (!Boolean.TRUE.equals(item.get("inArchive"))) throw new MyValidationException("The previous version of the record (DSpace item " + itemId + ") has not been archived yet, because it is still in the workspace or in the review workflow. DSpace can only version archived items: finish or approve that submission first.");
+
+        Map<String, Object> version = objectMapper.convertValue(restTemplate.exchange(itemUrl + "/version", HttpMethod.GET, entity, Object.class).getBody(), Map.class);
+        String versionHistoryUrl = this.getLink(version, "versionhistory");
+        if (versionHistoryUrl == null) return;
+
+        Map<String, Object> versionHistory = objectMapper.convertValue(restTemplate.exchange(versionHistoryUrl, HttpMethod.GET, entity, Object.class).getBody(), Map.class);
+        String draftVersionUrl = this.getLink(versionHistory, "draftVersion");
+        if (draftVersionUrl == null) return;
+
+        Object draftVersion = restTemplate.exchange(draftVersionUrl, HttpMethod.GET, entity, Object.class).getBody();
+        if (draftVersion != null) throw new MyValidationException("The record (DSpace item " + itemId + ") already has a new version in progress in DSpace. Submit or delete that draft version before depositing another one.");
+    }
+
+    private String getLink(Map<String, Object> resource, String name) {
+        if (resource == null || !(resource.get("_links") instanceof Map<?, ?> links)) return null;
+        if (!(links.get(name) instanceof Map<?, ?> link) || link.get("href") == null) return null;
+        return link.get("href").toString();
+    }
+
     private String createNewVersion(String itemId, String token, WebClient client) {
+        this.checkCanCreateNewVersion(itemId, token);
+
         String versioningUrl = this.dspaceServiceProperties.getDepositConfiguration().getRepositoryUrl() + "versioning/versions";
         String itemUrl = this.dspaceServiceProperties.getDepositConfiguration().getRepositoryUrl() + "core/items/" + itemId;
 
@@ -388,12 +440,12 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
                 .block();
 
         if (response == null || !response.containsKey("_links")) {
-            throw new RuntimeException("Failed to create new version.");
+            throw new MyApplicationException("Failed to create new version.");
         }
 
         Map<String, Object> links = (Map<String, Object>) response.get("_links");
         if (!links.containsKey("versionhistory")) {
-            throw new RuntimeException("Missing 'versionhistory' link in response.");
+            throw new MyApplicationException("Missing 'versionhistory' link in response.");
         }
         String versionHistoryUrl = ((Map<String, Object>) links.get("versionhistory")).get("href").toString();
 
@@ -405,12 +457,12 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
                 .block();
 
         if (response == null || !response.containsKey("_links")) {
-            throw new RuntimeException("Failed to retrieve version history.");
+            throw new MyApplicationException("Failed to retrieve version history.");
         }
 
         links = (Map<String, Object>) response.get("_links");
         if (!links.containsKey("draftVersion")) {
-            throw new RuntimeException("Missing 'draftVersion' link in response.");
+            throw new MyApplicationException("Missing 'draftVersion' link in response.");
         }
         String draftVersionUrl = ((Map<String, Object>) links.get("draftVersion")).get("href").toString();
 
@@ -422,7 +474,7 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
                 .block();
 
         if (response == null || !response.containsKey("id")) {
-            throw new RuntimeException("Failed to retrieve draft version.");
+            throw new MyApplicationException("Failed to retrieve draft version.");
         }
 
         return String.valueOf(response.get("id"));
@@ -442,7 +494,7 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
         );
 
         if (responseEntity.getBody() == null) {
-            throw new RuntimeException("Workspace item not found: " + workSpaceItemId);
+            throw new MyApplicationException("Workspace item not found: " + workSpaceItemId);
         }
 
         Map<String, Object> response = responseEntity.getBody();
@@ -605,7 +657,7 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
         HttpHeaders headers = this.createHeaders(token, false, false,true);
 
         String poolTaskId = this.getPoolTaskId(workFlowId, token);
-        if (poolTaskId == null) throw new RuntimeException("The DSpace account cannot approve its own submission, so the record could not be published straight to the archive. Make the account a reviewer of the collection, or submit records to the collection's workflow instead.");
+        if (poolTaskId == null) throw new MyValidationException("The DSpace account cannot approve its own submission, so the record could not be published straight to the archive. Make the account a reviewer of the collection, or submit records to the collection's workflow instead.");
 
         String pooltaskUrl = this.dspaceServiceProperties.getDepositConfiguration().getRepositoryUrl() + "workflow/pooltasks/" + poolTaskId;
         Object response = restTemplate.postForEntity(this.dspaceServiceProperties.getDepositConfiguration().getRepositoryUrl() + "workflow/claimedtasks", new HttpEntity<>(pooltaskUrl, headers), Object.class).getBody();
@@ -732,10 +784,11 @@ public class DspaceDepositServiceImpl implements DspaceDepositService {
     private static ExchangeFilterFunction logResponse() {
         return ExchangeFilterFunction.ofResponseProcessor(response -> {
             if (response.statusCode().isError()) {
-                return response.mutate().build().bodyToMono(String.class)
-                    .flatMap(body -> {
+                // reading the body consumes it, so the response passed on gets it back for the caller to read DSpace's error
+                return response.bodyToMono(String.class).defaultIfEmpty("")
+                    .map(body -> {
                         logger.error(new MapLogEntry("Response").And("method", response.request().getMethod().toString()).And("url", response.request().getURI()).And("status", response.statusCode().toString()).And("body", body));
-                        return Mono.just(response);
+                        return response.mutate().body(body).build();
                     });
             }
             return Mono.just(response);

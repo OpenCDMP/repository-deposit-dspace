@@ -11,7 +11,7 @@ The service implements the [repository-deposit-base](https://github.com/OpenCDMP
 - Uploads the plan document (PDF), the machine-actionable plan (RDA JSON) and the supporting files (ZIP)
 - Publishes the item in the archive, submits it to the collection's review workflow, or leaves it as a draft, as the organisation chooses
 - Lets users review and edit the item's metadata before it is submitted
-- Fills DSpace metadata from the answers of the plan blueprint and asset templates, through [semantics](https://opencdmp.github.io/optional-services/deposit-services/dspace-semantics/)
+- Fills DSpace metadata from the answers of the plan blueprint and asset templates, through [semantics](https://opencdmp.github.io/optional-services/deposit-services/dspace-semantics/), including keys a reference input takes from its reference type (the picked reference's ID, name, description, or one of its fields)
 
 ## Requirements
 

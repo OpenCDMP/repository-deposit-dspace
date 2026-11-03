@@ -14,7 +14,7 @@ WORKDIR /build/
 RUN mvn dependency:go-offline
 RUN mvn clean package
 ######################################## Run Stage ########################################
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:21-jre-noble
 
 ARG PROFILE
 ENV SERVER_PORT=8080

@@ -5,12 +5,17 @@ import org.opencdmp.commonmodels.enums.PlanAccessType;
 import org.opencdmp.commonmodels.models.PlanUserModel;
 import org.opencdmp.commonmodels.models.description.*;
 import org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.fielddata.RadioBoxDataModel;
+import org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.fielddata.ReferenceTypeDataModel;
 import org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.fielddata.SelectDataModel;
 import org.opencdmp.commonmodels.models.plan.PlanModel;
 import org.opencdmp.commonmodels.models.plandescriptionfields.FieldModel;
 import org.opencdmp.commonmodels.models.plandescriptionfields.PropertyDefinitionFieldSetItemModel;
 import org.opencdmp.commonmodels.models.plandescriptionfields.PropertyDefinitionFieldSetModel;
+import org.opencdmp.commonmodels.models.reference.ReferenceFieldModel;
 import org.opencdmp.commonmodels.models.reference.ReferenceModel;
+import org.opencdmp.commonmodels.models.referencetype.ReferenceTypeDefinitionModel;
+import org.opencdmp.commonmodels.models.referencetype.ReferenceTypeFieldModel;
+import org.opencdmp.commonmodels.models.referencetype.ReferenceTypeModel;
 import org.opencdmp.deposit.dspacerepository.configuration.semantics.SemanticsProperties;
 import org.opencdmp.deposit.dspacerepository.model.*;
 import org.opencdmp.deposit.dspacerepository.service.dspace.DspaceDepositServiceImpl;
@@ -312,10 +317,37 @@ public class DspaceBuilder {
     }
 
     private List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> findSchematicValues(String relatedId, List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fields){
-        return fields.stream().filter(x-> x.getSemantics() != null && x.getSemantics().contains(relatedId)).toList();
+        return fields.stream().filter(x-> (x.getSemantics() != null && x.getSemantics().contains(relatedId)) || this.typeCarries(x, relatedId)).toList();
     }
 
-    private Set<String> extractSchematicValues(List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fields, Map<String, PropertyDefinitionFieldSetModel> fieldSets) {
+    /** Does the input's reference type give the key to a system field (id, name, description) or to one of its own fields? */
+    private boolean typeCarries(org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field, String key) {
+        if (!(field.getData() instanceof ReferenceTypeDataModel data) || data.getReferenceType() == null || data.getReferenceType().getDefinition() == null) return false;
+        ReferenceTypeDefinitionModel definition = data.getReferenceType().getDefinition();
+        return (definition.getReferenceIdSemantics() != null && definition.getReferenceIdSemantics().contains(key))
+                || (definition.getLabelSemantics() != null && definition.getLabelSemantics().contains(key))
+                || (definition.getDescriptionSemantics() != null && definition.getDescriptionSemantics().contains(key))
+                || (definition.getFields() != null && definition.getFields().stream().anyMatch(x -> x.getSemantics() != null && x.getSemantics().contains(key)));
+    }
+
+    /**
+     * The value a picked reference gives the key through its type: its id, name or description when the type gives
+     * that system field the key, else the value of the reference's own field carrying it. Null when none does.
+     */
+    private String referenceValue(ReferenceModel referenceModel, ReferenceTypeDefinitionModel definition, String key) {
+        if (referenceModel == null || definition == null || key == null) return null;
+        String value = null;
+        if (definition.getReferenceIdSemantics() != null && definition.getReferenceIdSemantics().contains(key)) value = referenceModel.getReference();
+        else if (definition.getLabelSemantics() != null && definition.getLabelSemantics().contains(key)) value = referenceModel.getLabel();
+        else if (definition.getDescriptionSemantics() != null && definition.getDescriptionSemantics().contains(key)) value = referenceModel.getDescription();
+        else if (definition.getFields() != null && referenceModel.getDefinition() != null && referenceModel.getDefinition().getFields() != null) {
+            ReferenceTypeFieldModel typeField = definition.getFields().stream().filter(x -> x.getCode() != null && x.getSemantics() != null && x.getSemantics().contains(key)).findFirst().orElse(null);
+            if (typeField != null) value = referenceModel.getDefinition().getFields().stream().filter(x -> typeField.getCode().equals(x.getCode())).map(ReferenceFieldModel::getValue).findFirst().orElse(null);
+        }
+        return value != null && !value.isBlank() ? value : null;
+    }
+
+    private Set<String> extractSchematicValues(String semantic, List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fields, Map<String, PropertyDefinitionFieldSetModel> fieldSets) {
         Set<String> values = new LinkedHashSet<>();
         for (org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel field : fields) {
             if (field.getData() == null) continue;
@@ -366,7 +398,15 @@ public class DspaceBuilder {
                     }
                     case REFERENCE_TYPES -> {
                         if (valueField.getReferences() != null && !valueField.getReferences().isEmpty()) {
+                            boolean ownKey = field.getSemantics() != null && field.getSemantics().contains(semantic);
                             for (ReferenceModel referenceModel : valueField.getReferences()) {
+                                if (!ownKey) {
+                                    // the key comes through the reference type: the picked reference's id, name, description or field
+                                    ReferenceTypeModel type = field.getData() instanceof ReferenceTypeDataModel data ? data.getReferenceType() : null;
+                                    String value = this.referenceValue(referenceModel, type != null ? type.getDefinition() : null, semantic);
+                                    if (value != null) values.add(value);
+                                    continue;
+                                }
                                 if (referenceModel == null
                                         || referenceModel.getType() == null || referenceModel.getType().getCode() == null || referenceModel.getType().getCode().isBlank()
                                         || referenceModel.getDefinition() == null || referenceModel.getDefinition().getFields() == null || referenceModel.getDefinition().getFields().isEmpty()) continue;
@@ -414,7 +454,7 @@ public class DspaceBuilder {
             for (DescriptionModel descriptionModel : planModel.getDescriptions()) {
                 for (SemanticsProperties.PathName relatedName : acceptedSemantics) {
                     List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fieldsWithSemantics = this.findSchematicValues(relatedName.getName(), descriptionModel.getDescriptionTemplate().getDefinition().getAllField());
-                    Set<String> values = extractSchematicValues(fieldsWithSemantics, descriptionModel.getProperties().getFieldSets());
+                    Set<String> values = extractSchematicValues(relatedName.getName(), fieldsWithSemantics, descriptionModel.getProperties().getFieldSets());
                     if (!values.isEmpty()) pathToValuesMap.computeIfAbsent(relatedName.getPath(), k -> new LinkedHashSet<>()).addAll(values);
                 }
             }
@@ -422,7 +462,7 @@ public class DspaceBuilder {
 
         for (SemanticsProperties.PathName relatedName : acceptedSemantics) {
             List<org.opencdmp.commonmodels.models.planblueprintdescriptiontemplatefields.FieldModel> fieldsWithSemantics = this.findSchematicValues(relatedName.getName(), planModel.getPlanBlueprint().getDefinition().getAllField());
-            Set<String> values = extractSchematicValues(fieldsWithSemantics, planModel.getProperties().getFieldSets());
+            Set<String> values = extractSchematicValues(relatedName.getName(), fieldsWithSemantics, planModel.getProperties().getFieldSets());
             if (!values.isEmpty()) pathToValuesMap.computeIfAbsent(relatedName.getPath(), k -> new LinkedHashSet<>()).addAll(values);
         }
 

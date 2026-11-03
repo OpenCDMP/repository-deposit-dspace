@@ -22,7 +22,8 @@ import java.util.stream.Collectors;
  * Every value is "can use": the deposit always writes the title, the issued date, the abstract, the type (the
  * default item type) and the authors the organisation credits from the plan's members, so nothing a template or
  * blueprint leaves out breaks it.
- * Keys are read from blueprint and template inputs alike, and a reference input gives its reference's code. The format
+ * Keys are read from blueprint and template inputs alike, and a reference input gives its reference's code; a reference
+ * input without the key gives the id, name, description or field its reference type gives the key. The format
  * and behaviour of each value follow the same path rules {@code DspaceBuilder.applySemantics} applies.
  */
 public final class DspaceSemanticsManifest {
@@ -88,6 +89,8 @@ public final class DspaceSemanticsManifest {
                 KNOWN_LABELS.getOrDefault(key, label(key)),
                 null,
                 element.isBlank() ? null : element);
+        // every key is read through the reference type of a reference input too
+        usage.setFromReferenceFields(true);
 
         if (safePath.contains(PATH_PROVENANCE) || safePath.contains(PATH_DATE_ACCESSIONED) || safePath.contains(PATH_DATE_AVAILABLE)) {
             usage.setFormat(safePath.contains(PATH_PROVENANCE) ? SemanticValueFormat.Text : SemanticValueFormat.Date);
